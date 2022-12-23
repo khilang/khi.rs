@@ -2,7 +2,13 @@
 name = "dxrs"
 description = "Recursive parser for the Dx format"
 version = "0.0.0"
+authors = ["Torm"]
 edition = "2021"
+homepage = "https://github.com/Torm/dxrs"
+repository = "https://github.com/Torm/dxrs"
+license = "MIT OR Apache-2.0"
+keywords = ["parser", "format", "serialization", "config"]
+categories = ["config", "parser-implementations"]
 
 
 [features]
