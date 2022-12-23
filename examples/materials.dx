@@ -1,0 +1,42 @@
+# Example of a Dx document describing some materials.
+#
+# This example demonstrates how Dx can describe the same structures as JSON. Compare this document to the corresponding
+# JSON document.
+
+
+materials: {   # No need for quotes around keys.
+  oak-planks: {
+    name: Oak planks;   # No need for quotes around strings.
+    price: 300;   # Trailing semicolons are allowed.
+  };
+  birch-planks: {
+    name: Birch planks;
+    price: 150;
+  };
+  fir-planks: {
+    name: Fir planks;
+    price: 100;
+  };
+  stone: {
+    name: Stone;
+    price: 150;
+    tags: [heavy; stone];
+    description: A solid material, but does not insulate well.;   # Dx uses semicolon delimiters instead of commas, because commas occur frequently in text.
+  };
+  marble: {
+    name: Marble;
+    price: 450;
+    beauty: 2;
+    tags: [heavy; stone; wealthy];
+  };
+  sandstone: {
+    name: Sandstone;
+    price: 100;
+    tags: [stone];
+  };
+  glass: {
+    name: Glass;
+    price: 400;
+  };
+  dirt: { name: Dirt; };
+};

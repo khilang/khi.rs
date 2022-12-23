@@ -1,0 +1,31 @@
+# Example of an article written in Dx format.
+#
+# This example demonstrates how structured and unstructured data can coexist in a single document.
+
+
+title: Aluminium;
+type: chemical-element;
+tags: [metal; reactive; common];
+key: aluminium;
+element-symbol: Al;
+atomic-number: 13;
+references: {
+  wikipedia: "https://en.wikipedia.org/wiki/Aluminium";
+  snl: "https://snl.no/aluminium";
+};
+
+content: {
+  (h1) (title!)   # (title!) is a macro that substitutes in the article title.
+  (span class:article-name) {Aluminium} is a
+  (@ chemical-element) {chemical element}   # The (@) macro denotes an article link.
+  with
+  (@ element-symbol) {symbol}
+  (span class:chemical-symbol-text) {Al}
+  and
+  (@ atomic-number) {atomic number}
+  (span class:atomic-number) {13}.
+  (\\)   # (\\) indicates a line break.
+  In pure form, it is a highly reactive metal.
+  (\\)
+  It constitutes 8.2% of the earth's crust.
+};

@@ -1,0 +1,27 @@
+[package]
+name = "dxrs"
+description = "Recursive parser for the Dx format"
+version = "0.0.0"
+edition = "2021"
+
+
+[features]
+default = ["common", "parse"]
+
+parse = []
+common = []
+
+html = ["parse"]
+tex = ["parse"]
+
+
+[[bin]]
+name = "texdx-cmd"
+path = "src/tex/tex_command.rs"
+required-features = ["tex"]
+
+
+[[bin]]
+name = "htmldx-cmd"
+path = "src/html/html_command.rs"
+required-features = ["html"]

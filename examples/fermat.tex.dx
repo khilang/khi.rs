@@ -1,0 +1,31 @@
+# Example of LaTeX preprocessor input written in Dx format.
+#
+# This example demonstrates how Dx can express the same markup structures as LaTeX. Compare this document to the
+# corresponding LaTeX document.
+#
+# Compile this document to LaTeX using the preprocessor with command:
+# cargo run --features="tex" --bin texdx-cmd -- examples/fermat.tex.dx
+
+
+(documentclass article)
+
+(usepackage lipsum)
+
+(begin document)
+
+(section) {Fermat's little theorem}
+
+Let $p$ be a prime and $n$ an integer.
+Then $n^p = n (pmod) p$.
+
+(\\)   # Inserts a break.
+
+Dividing by $n$\: $n^{p-1} = 1 (pmod) p$.
+Subtracting $1$\: $n^{p-1} - 1 = 0 (pmod) p$.
+This shows that $n^{p-1} - 1$ is a multiple of $p$.
+
+(section) {Lorem ipsum}
+
+(lipsum? 10)   # A question mark means that the next argument is optional. It will be enclosed in square brackets.
+
+(end document)

@@ -1,0 +1,25 @@
+# Example of HTML preprocessor input written in Dx format.
+#
+# This example demonstrates how Dx can express HTML tag-trees. Compare this document to the corresponding HTML document.
+#
+# Compile this document to HTML using the preprocessor with command:
+# cargo run --features="html" --bin htmldx-cmd -- examples/frontpage.html.dx
+
+
+(doctype!)   # The exclamation mark indicates a macro, rather than a tag.
+(html) {   # The first argument after a tag is the tag content.
+  (head) {
+    (title) (title!)
+    (script type:text/javascript src:/script.js) _   # Underscore denotes an empty grouping. The script tag content is empty.
+  }
+  (body) {
+    (h1 class:frontpage-heading) (title!)
+    (p) "Hello world!"
+    (img src:/frontpage.jpg /)
+    (div class:darker-background) (p) {
+      This is a (em class:italic-text <>) paragraph with   # <> inserts whitespace to the left and right of this tag.
+      (br /)   # Slash at end of tag macro indicates self closing tag.
+      a an em tag and a line break inside.
+    }
+  }
+}
