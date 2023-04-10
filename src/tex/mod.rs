@@ -1,3 +1,7 @@
-mod tex_write;
+//! UDL-based LaTeX preprocessor.
 
-pub use tex_write::*;
+
+mod preprocess;
+
+
+pub use preprocess::*;

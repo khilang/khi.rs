@@ -1,0 +1,76 @@
+# Comments can be added anywhere whitespace can be added.
+
+
+# TODO: Insert and fix remaining
+
+
+# Expression/argument
+<expr> ::= <exprp>
+         | <>
+
+
+# Expression that must be present (cannot be empty).
+<exprp> ::= <text> <expr>
+          | "[" <seq> "]" <expr>
+          | "{" <expr> "}" <expr>
+          | "{" <dictp> "}" <expr>
+          | <cmd> <expr>
+
+
+<dict> ::= <dictp>
+         | <>
+
+
+<dictp> ::= <key> ":" <exprp>
+          | <key> ":" <exprp> ";" <dict>
+          | <key> ";" <dict>
+          | ":" <dict>
+
+
+<seq> ::= <exprp>
+        | <expr> ";" <seq>
+        | <>
+        | ":" <seq>
+
+
+<cmd> ::= "(" <key> <cmd-opt> ")"<cmd-arg>
+
+
+<cmd-opt> ::= <>
+            | <key> <cmd-opt>
+            | <key> ":" <arg> <cmd-opt>
+
+
+# Applied argument
+<cmd-arg> ::= <>
+            | ":"<word><cmd-arg>
+            | ":"<quote><cmd-arg>
+            | ":""{" <expr> "}"<cmd-arg>
+            | ":""{" <dictp> "}"<cmd-arg>
+            | ":""[" <seq> "]"<cmd-arg>
+            | ":""(" <alt> ")"<cmd-arg>
+
+
+<text> ::= <words>
+         | <quote>
+
+
+# A quote is anything enclosed within the quotes.
+<quote> ::= "\"" ... "\""
+
+
+<words> ::= <word> <words>
+          | <>
+
+
+<key> ::= <word>
+        | <quote>
+
+
+# A word is any sequence of glyphs that contains
+# no reserved characters (except if they are escaped.)
+<word> ::= ...
+
+
+# No whitespace allowed
+<> ::= ...

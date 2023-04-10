@@ -1,11 +1,11 @@
-//! A LaTeX preprocessor processing Dx input.
+//! A LaTeX preprocessor processing UDL input.
 
 
 use std::env;
 use std::fs::File;
 use std::io::Read;
-use dxrs::parse::{ErrorType, parse_expression, ParsedFunction, ParseError};
-use dxrs::tex::write_tex;
+use udl::parse::{parse_expression_document, ParseError};
+use udl::tex::{PreprocessorError, write_tex};
 
 
 fn main() {
@@ -24,22 +24,71 @@ fn preprocess() -> Result<String, String> {
         let mut source = String::new();
         file.read_to_string(&mut source).unwrap();
         print!("Preprocessing document of size: {}\n\n", source.len());
-        let parse = match parse_expression(&source) {
+        let parse = match parse_expression_document(&source) {
             Ok(parse) => parse,
             Err(error) => return Err(match error {
-                ParseError { position, error } => match error {
-                    ErrorType::ClosingMismatch => format!("Illegal closing at {}:{}.", position.line, position.column),
-                    ErrorType::EscapingEndOfStream => format!("Escaping EOS at {}:{}.", position.line, position.column),
-                    ErrorType::IllegalSemicolon => format!("Illegal delimiter at {}:{}.", position.line, position.column),
-                    ErrorType::InvalidKey => format!("Invalid key at {}:{}.", position.line, position.column),
-                    ErrorType::IllegalColon => format!("Illegal colon at {}:{}.", position.line, position.column),
-                    ErrorType::OptionNotFinished => format!("Option not finished at {}:{}.", position.line, position.column),
-                    ErrorType::ExpectedColon => format!("Expected colon at {}:{}.", position.line, position.column),
+                ParseError::EscapingEndOfStream => {
+                    format!("Escaping EOS.")
+                }
+                ParseError::ExpectedClosingBracket(at) => {
+                    format!("Expected bracket closing at {}:{}.", at.line, at.column)
+                }
+                ParseError::ExpectedSequenceClosing(at) => {
+                    format!("Expected sequence closing at {}:{}.", at.line, at.column)
+                }
+                ParseError::ExpectedClosingParenthesis(at) => {
+                    format!("Expected parenthesis closing at {}:{}.", at.line, at.column)
+                }
+                ParseError::ExpectedClosingSquare(at) => {
+                    format!("Expected closing crotchet at {}:{}.", at.line, at.column)
+                }
+                ParseError::ExpectedOpeningParenthesis(at) => {
+                    format!("Expected opening parenthesis at {}:{}.", at.line, at.column)
+                }
+                ParseError::ExpectedColonAfterGroupOperator(at) => {
+                    format!("Expected colon after grouping operator at {}:{}.", at.line, at.column)
+                }
+                ParseError::ExpectedCommandAfterGroupOperator(at) => {
+                    format!("Expected command after grouping operator at {}:{}.", at.line, at.column)
+                }
+                ParseError::ExpectedCommandClosing(at) => {
+                    format!("Expected command closing at {}:{}.", at.line, at.column)
+                }
+                ParseError::ExpectedCommandArgument(at) => {
+                    format!("Expected command argument at at {}:{}.", at.line, at.column)
+                }
+                ParseError::ExpectedCommandKey(at) => {
+                    format!("Expected command key at {}:{}.", at.line, at.column)
+                }
+                ParseError::ExpectedAttributeArgument(at) => {
+                    format!("Expected attribute value at {}:{}.", at.line, at.column)
+                }
+                ParseError::ExpectedEntrySeparator(at) => {
+                    format!("Expected entry separator at {}:{}.", at.line, at.column)
+                }
+                ParseError::ExpectedEnd(at) => {
+                    format!("Expected EOS at {}:{}.", at.line, at.column)
+                }
+                ParseError::CommentedBracket(at) => {
+                    format!("Commented bracket not allowed at {}:{}.", at.line, at.column)
+                }
+                ParseError::UnclosedQuote(at) => {
+                    format!("Unclosed quote at {}:{}.", at.line, at.column)
                 }
             }),
         };
         print!("{}\n\n", parse);
-        let output = write_tex(&parse)?;
+        let output = match write_tex(&parse) {
+            Ok(o) => o,
+            Err(e) => match e {
+                PreprocessorError::IllegalSequence(at) => {
+                    format!("Illegal sequence at {}:{}.", at.line, at.column)
+                }
+                PreprocessorError::IllegalDictionary(at) => {
+                    format!("Illegal dictionary at {}:{}.", at.line, at.column)
+                }
+            },
+        };
         Ok(output)
     } else {
         Err(format!("Specify source file as first argument."))

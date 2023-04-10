@@ -1,0 +1,22 @@
+# Example of HTML preprocessor input written in UDL.
+#
+# Compile this document to HTML using the preprocessor with command:
+# cargo run --features="html" --bin udl-html-cmd -- examples/frontpage.html.u
+
+
+(@doctype)
+(html):{
+  (head):{
+    (title):(@title)
+    (script src:script.js):{}
+  }
+  (body):{
+    (h1 id:main-heading):(@title)
+    (p):{Hello world!}
+    (img src:frontpage.jpg)
+    (div class:dark-background):( ):(p):{
+      This is a paragraph. (br)
+      (em class:italic-text):{This text is italic}
+    }
+  }
+}

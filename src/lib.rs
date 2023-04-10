@@ -1,8 +1,13 @@
-//! A recursive parser for the Dx format.
+//! Parser for UDL (Universal Data Language).
 
 
 extern crate core;
 
+
+#[cfg(feature = "parse")]
+pub mod ast;
+#[cfg(feature = "parse")]
+pub mod lex;
 #[cfg(feature = "parse")]
 pub mod parse;
 
