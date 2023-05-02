@@ -4,7 +4,7 @@
 use std::env;
 use std::fs::File;
 use std::io::Read;
-use udl::parse::{parse_expression_document, ParseError};
+use udl::parse::{error_to_string, parse_expression_document, ParseError};
 use udl::tex::{PreprocessorError, write_tex};
 
 
@@ -26,56 +26,7 @@ fn preprocess() -> Result<String, String> {
         print!("Preprocessing document of size: {}\n\n", source.len());
         let parse = match parse_expression_document(&source) {
             Ok(parse) => parse,
-            Err(error) => return Err(match error {
-                ParseError::EscapingEndOfStream => {
-                    format!("Escaping EOS.")
-                }
-                ParseError::ExpectedClosingBracket(at) => {
-                    format!("Expected bracket closing at {}:{}.", at.line, at.column)
-                }
-                ParseError::ExpectedSequenceClosing(at) => {
-                    format!("Expected sequence closing at {}:{}.", at.line, at.column)
-                }
-                ParseError::ExpectedClosingParenthesis(at) => {
-                    format!("Expected parenthesis closing at {}:{}.", at.line, at.column)
-                }
-                ParseError::ExpectedClosingSquare(at) => {
-                    format!("Expected closing crotchet at {}:{}.", at.line, at.column)
-                }
-                ParseError::ExpectedOpeningParenthesis(at) => {
-                    format!("Expected opening parenthesis at {}:{}.", at.line, at.column)
-                }
-                ParseError::ExpectedColonAfterGroupOperator(at) => {
-                    format!("Expected colon after grouping operator at {}:{}.", at.line, at.column)
-                }
-                ParseError::ExpectedCommandAfterGroupOperator(at) => {
-                    format!("Expected command after grouping operator at {}:{}.", at.line, at.column)
-                }
-                ParseError::ExpectedCommandClosing(at) => {
-                    format!("Expected command closing at {}:{}.", at.line, at.column)
-                }
-                ParseError::ExpectedCommandArgument(at) => {
-                    format!("Expected command argument at at {}:{}.", at.line, at.column)
-                }
-                ParseError::ExpectedCommandKey(at) => {
-                    format!("Expected command key at {}:{}.", at.line, at.column)
-                }
-                ParseError::ExpectedAttributeArgument(at) => {
-                    format!("Expected attribute value at {}:{}.", at.line, at.column)
-                }
-                ParseError::ExpectedEntrySeparator(at) => {
-                    format!("Expected entry separator at {}:{}.", at.line, at.column)
-                }
-                ParseError::ExpectedEnd(at) => {
-                    format!("Expected EOS at {}:{}.", at.line, at.column)
-                }
-                ParseError::CommentedBracket(at) => {
-                    format!("Commented bracket not allowed at {}:{}.", at.line, at.column)
-                }
-                ParseError::UnclosedQuote(at) => {
-                    format!("Unclosed quote at {}:{}.", at.line, at.column)
-                }
-            }),
+            Err(error) => return Err(error_to_string(&error)),
         };
         print!("{}\n\n", parse);
         let output = match write_tex(&parse) {

@@ -1,54 +1,59 @@
 # Comments can be added anywhere whitespace can be added.
 
 
-# TODO: Insert and fix remaining
-
-
-# Expression/argument
+# Expression / argument
 <expr> ::= <exprp>
          | <>
 
 
 # Expression that must be present (cannot be empty).
 <exprp> ::= <text> <expr>
-          | "[" <seq> "]" <expr>
           | "{" <expr> "}" <expr>
           | "{" <dictp> "}" <expr>
-          | <cmd> <expr>
+          | "[" <seq> "]" <expr>
+          | <direxpr> <expr>
 
 
 <dict> ::= <dictp>
          | <>
 
 
-<dictp> ::= <key> ":" <exprp>
-          | <key> ":" <exprp> ";" <dict>
+<dictp> ::= <key> ":" <expr>
+          | <key> ":" <expr> ";" <dict>
           | <key> ";" <dict>
           | ":" <dict>
 
 
 <seq> ::= <exprp>
         | <expr> ";" <seq>
-        | <>
         | ":" <seq>
+        | <>
 
 
-<cmd> ::= "(" <key> <cmd-opt> ")"<cmd-arg>
+# Directive expression
+<direxpr> ::= "<" <key> <attr> ">"<dirarg>
+            | "<" <key> ":" <attr> ">" <expr> "</" <key> ">"
+            | "<" <key> ":" <attr> ">" <expr> "</" ">"
 
 
-<cmd-opt> ::= <>
-            | <key> <cmd-opt>
-            | <key> ":" <arg> <cmd-opt>
+# Directive attribute
+<attr> ::= <>
+         | <key> <attr>
+         | <key> ":" <key> <attr>
+         | <key> ":" "{" <expr> "}" <attr>
+         | <key> ":" "{" <dictp> "}" <attr>
+         | <key> ":" "[" <seq> "]" <attr>
+         | <key> ":" <direxpr> <attr>
 
 
-# Applied argument
-<cmd-arg> ::= <>
-            | ":"<word><cmd-arg>
-            | ":"<quote><cmd-arg>
-            | ":""{" <expr> "}"<cmd-arg>
-            | ":""{" <dictp> "}"<cmd-arg>
-            | ":""[" <seq> "]"<cmd-arg>
-            | ":""(" <alt> ")"<cmd-arg>
+# Directive argument
+<dirarg> ::= < >
+           | ":"<key><dirarg>
+           | ":""{" <expr> "}"<dirarg>
+           | ":""{" <dictp> "}"<dirarg>
+           | ":""[" <seq> "]"<dirarg>
+           | ":""<" <key> <attr> ">"<dirarg>
+           | ":""<"">"":"<direxpr>
 
 
 <text> ::= <words>

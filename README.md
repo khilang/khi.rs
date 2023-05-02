@@ -17,31 +17,29 @@ read, understand and edit. The format is concise and has minimal syntax noise. F
 document. It is practical and convenient for hand-coding and thus as a source format. Therefore, the format is suitable
 as a basis for configuration and markup formats.
 
-**UDL** is a simple: there are few special cases and exceptions and there are few reserved characters. This makes it
+**UDL** is simple: there are few special cases and exceptions and there are few reserved characters. This makes it
 easy to reason about, generate and parse. At the expense of readability, it can be compactified. Although not designed
-for these purposes, it is viable for serialization, data storage and data interchange, though other formats may be more
-optimal.
+for these purposes, it is viable for serialization, data storage and data interchange, though here other formats may be
+more optimal.
 
 ## Comparisons
 
-Compared to **XML**, **UDL** is concise and has lesser syntax noise, has lesser redundancy and is easier to write.
-**UDL** has native support for the universal data structures sequences and dictionaries. **UDL**'s command syntax is
-based on **XML**'s tag syntax, but modifications has been made to reduce syntax noise.
+Compared to **XML**, **UDL** has native support for the universal data structures sequences and dictionaries. **UDL**'s
+tag notation syntax is based on **XML**'s tag syntax, but with some modifications. In **UDL**, there is also support
+for encoding commands and actions.
 
 Compared to **JSON**, **UDL** has lesser syntax noise; it does not require quotes around strings. **UDL** has native
-support for markup, and importantly, comments. **UDL**'s syntax for sequences and dictionaries is inspired by **JSON**,
-but obviously some modifications has been made here as well to reduce syntax noise.
+support for markup, and importantly, comments. **UDL**'s syntax for sequences and dictionaries is inspired by **JSON**.
 
 Compared to (regular) **LaTeX**, **UDL** has support for structured data. They are similar in terms of syntax noise and
-conciseness. It may be argued that command application in **UDL** is more readable than command application in
-**LaTeX**, since it can be seen clearly from syntax which arguments a function applies to. Additionally, macros can take
-structured data as arguments, which is convenient for certain commands.
+conciseness. It may be argued that command notation in **UDL** is more readable than command notation in **LaTeX**,
+since it can be seen clearly from syntax which arguments a command applies to. Additionally, commands can take
+structured data as arguments, which is convenient for certain applications.
 
 ## Examples & showcase
 
 Here are some examples of **UDL**-based formats and documents written in them. It is demonstrated how structured and
-unstructured data can coexist and form more complex structures,
-markup in the TeX example, and how to use EXL for configuration in the materials example.
+unstructured data can coexist and form more complex structures, and how it can be used for markup and configuration.
 
 ### Wiki article example
 
@@ -58,14 +56,14 @@ Additionally, this example showcases the **UDL** syntax. The readability, concis
 should be compared to other formats encoding the same data.
 
 Notes:
-- Macro application looks like this: `(macro):arg1:arg2:...:argN`. Arguments are appended with a colon.
+- Macro application looks like this: `<macro>:arg1:arg2:...:argN`. Arguments are appended with a colon.
 - The `@` macro inserts a link. It takes two arguments: the first argument is the article to link to, and the second is
   the link label that will appear in the article.
 - The `title` macro takes no arguments and is substituted for the article title.
 
 ```
 title: Aluminium;
-shortdesc: The (@):element:{chemical element} Aluminium.;
+shortdesc: The <@>:element:{chemical element} aluminium.;
 uuid: 0c5aacfe-d828-43c7-a530-12a802af1df4;
 type: chemical-element;
 tags: [metal; common];
@@ -92,7 +90,7 @@ refs: {
   atomnum: 1a5e1974-a78c-4820-afeb-79bef6974814;
   react: ab7d8a1f-c028-4466-9bb2-41a39d153241;
   aloxide: c1ff08e7-a88f-42d5-83c3-6adc4835a07b;
-  stability: b3b13474-4fe3-4556-9568-925c066916a5;
+  stab: b3b13474-4fe3-4556-9568-925c066916a5;
   purity: 40786551-85c4-461c-ba6e-4d54d5863820;
   ion: effd5c7a-da31-4357-a94c-91343e9a05eb;
   metal: 84333088-cfcc-4e78-8d3f-7307dcab144b;
@@ -100,20 +98,20 @@ refs: {
 
 content: {
 
-  (@):self:(title) is a (@):element:{chemical element} with
-  (@):chemsym:{chemical symbol} (chemsym) and (@):atomnum:{atomic number}
-  (atomnum).
+  <@>:self:<title> is a <@>:element:{chemical element} with
+  <@>:chemsym:{chemical symbol} <chemsym> and <@>:atomnum:{atomic number}
+  <atomnum>.
 
-  (p)
+  <p>
 
-  In (@):purity:pure form, it is a highly (@):react:reactive (@):metal:metal,
-  but normally a thin coat of (@):aloxide:{aluminium oxide} forms on its
-  surface, keeping it highly (@):stability:{stable}.
+  In <@>:purity:pure form, it is a highly <@>:react:reactive <@>:metal:{metal},
+  but normally a thin coat of <@>:aloxide:{aluminium oxide} forms on its
+  surface, keeping it highly <@>:stab:{stable}.
 
-  (p)
+  <p>
 
-  In nature, it occurs as the (@):ion:ion ($):{Al^{3+}}. It constitutes 8.2%
-  of the earth's crust, making it the most common (@):metal:metal found there.
+  In nature, it occurs as the <@>:ion:ion <$>:{Al^{3+}}. It constitutes 8.2%
+  of the earth's crust, making it the most common <@>:metal:metal found there.
 
   ...
 
@@ -138,22 +136,24 @@ Notes:
 - The `@doctype` macro substitutes for `<!doctype html>`.
 
 ```
-(@doctype)
-(html):{
-  (head):{
-    (title):(@title)
-    (script src:script.js):{}
-  }
-  (body):{
-    (h1 id:main-heading):(@title)
-    (p):{Hello world!}
-    (img src:frontpage.jpg)
-    (div class:dark-background):( ):(p):{
-      This is a paragraph. (br)
-      (em class:italic-text):{This text is italic}
-    }
-  }
-}
+<@doctype>
+<html:> # <tag:> is an opening tag and </tag> or </> is a closing tag.
+  <head:>
+    <title:><@title></>
+    <script: src:script.js></>
+  </head>
+  <body:>
+    <h1: id:main-heading><@title></>
+    <p:>Hello world!</> # These two paragraph tags are equivalent.
+    <p>:{Hello world!}
+    <img src:frontpage.jpg>
+    <div: class:dark-background><p:>
+      This is a paragraph <br>
+      with a line break.
+      <em: class:italic-text>This text is italic.</>
+    </></>
+  </body>
+</html>
 ```
 
 ### TeX preprocessor example
@@ -164,7 +164,7 @@ compile this document to **LaTeX**.
 The purpose of this example is to exhibit a **UDL**-based encoding of **LaTeX**-like markup.
 
 Compare this document to the corresponding **LaTeX** document. They are similar, but one benefit of the **UDL** document
-is that the arguments of a command can be determined from syntax alone.
+is that the arguments applied to a command can be determined from syntax alone.
 
 As an application, this encoding could possibly have a use-case in the wiki article example. Articles may contain
 mathematical notation, and this encoding could be used to encode **LaTeX**-math, that is later displayed by **MathJax**.
@@ -175,44 +175,45 @@ Notes:
   the tabulated values.
 
 ```
-(documentclass):article
+<documentclass>:article
 
-(usepackage):amsmath
+<usepackage>:amsmath
 
-(begin):document
+<begin>:document
 
-(section):Equations
+<section>:Equations
 
-  # Define a Sum-range command.
-  (newcommand):(SumRn):*:4:{
-    (sum)_{#1}^{#2 (dots) #3}{#4}
+  # Define a sum-range command.
+  <newcommand>:<SumRn>:*:4:{
+    <sum>_{#1}^{#2 <dots> #3} #4
   }
 
-  (begin):math
-    (SumRn):k:0:100:k
-    = 0 + 1 + 2 + (dots) + 99 + 100
+  <begin>:math
+    <SumRn>:k:0:100:k
+    = 0 + 1 + 2 + <dots> + 99 + 100
+    = (0 + 100) + (1 + 99) + <dots> (49 + 51) + 50
     = 5050
-  (end):math
+  <end>:math
 
-  (begin):math
-    (SumRn):k:0:n:k
-    = 0 + 1 + 2 + (dots) + ((n - 1)) + n
-    = n (cfrac):n:2 + (cfrac):n:2
-    = (cfrac):n^2:2 + (cfrac):n:2
-    = n (cdot) (cfrac):{n + 1}:2
-  (end):math
+  <begin>:math
+    <SumRn>:k:0:n:k
+    = 0 + 1 + 2 + <dots> + (n - 1) + n
+    = n <cfrac>:n:2 + <cfrac>:n:2
+    = <cfrac>:n^2:2 + <cfrac>:n:2
+    = n <cdot> <cfrac>:{n + 1}:2
+  <end>:math
 
-(section):Matrices
+<section>:Matrices
 
-  (begin):math
-    (mathbf):X = (begin):bmatrix (@tabulate-sq):3:[
+  <begin>:math
+    <mathbf>:X = <begin>:bmatrix <@tabulate-sq>:3:[
       1;0;0;
       0;1;0;
       0;0;1;
-    ] (end):bmatrix
-  (end):math
+    ] <end>:bmatrix
+  <end>:math
 
-(end):document
+<end>:document
 ```
 
 ### Material configuration example
@@ -271,7 +272,7 @@ An *expression* is a sequence of arguments.
 **Example:** `arg1 arg2 arg3 ...`.
 
 An *argument* is an element of an expression. There are 6 argument variants: *empty*, *text*, *sequence*, *dictionary*,
-*command* and *compound*.
+*directive* and *compound*.
 
 ### Grouping
 
@@ -285,7 +286,7 @@ empty argument. A grouping of one argument simply represents the argument itself
 arguments represents a compound argument.
 
 **Example:** `{ arg }` is a grouping of a single argument. This could be useful for delimiting text or delimiting
-command arguments. As arguments, `arg` is equal to `{ arg }`, which is equal to `{ { arg } }`. Indeed, enclosing a
+directive arguments. As arguments, `arg` is equal to `{ arg }`, which is equal to `{ { arg } }`. Indeed, enclosing a
 single argument in brackets has no structural effect, but it could improve readability in some cases.
 
 **Example:** `{ arg1 arg2 arg3 }` is a grouping of 3 arguments, which yields a compound argument with 3 arguments.
@@ -307,11 +308,11 @@ expression consisting of 5 text arguments.
 
 Unquoted text cannot contain reserved characters, unless they are escaped with backslash `\ `.
 
-**Example:** `Some reserved characters\: \:, \;, \(, \), etc.`.
+**Example:** `Some reserved characters\: \:, \;, \<, \}, etc.`.
 
-Colons `:` and parentheses `(` `)` can be inserted into unquoted text by repetition.
+Colons `:` can be inserted into unquoted text by repetition.
 
-**Example:** `Some text:: ((More text))` parses to the text `Some text: (More text)`.
+**Example:** `Some text:: More text` parses to the text `Some text: More text`.
 
 Furthermore, any whitespace in unquoted text is reduced to a single space character. **UDL** is a whitespace-equivalent
 format, where all whitespace is equal to a space character, unless it is escaped or within a quote.
@@ -349,38 +350,53 @@ A trailing semicolon is allowed.
 
 **Example:** `[expr1; expr2;]` and `[expr1; expr2]` are equal.
 
-### Applied command argument
+### Directive argument
 
-An *applied command* argument is a *command* enclosed in parentheses, followed by arguments applied to it which are
-appended with colons `:` where there is no surrounding whitespace.
+A *directive expression* is a directive applied to a number of arguments. There are two notations that produce directive
+expressions: command notation and tag notation.
 
-**Example:** `(command):arg1:arg2:arg3:...`.
+#### Command notation
 
-**Example:** `(text-weight):600:{This is bold text}` is an application of the command `text-weight` to the 2 text
-arguments `600` and `This is bold text`.
+In command notation, a *directive expression* is encoded as a *directive* enclosed in angular brackets, followed by
+arguments applied to it which are appended with colons `:` where there is no surrounding whitespace.
 
-**Example:** `(linebreak)` is an applied command argument not applying any arguments.
+**Example:** `<dir>:arg1:arg2:...:argN` is a directive expression with N arguments.
 
-The command, which is the part enclosed in parentheses, require a command name. This is given by a word or a quote. The 
-name cannot be given by multiple words. Following the name, it is possible to insert attributes. An attribute is a
+**Example:** `<dir>` is a directive with no arguments.
+
+**Example:** `<text-weight>:600:{This is bold text}` is the directive `text-weight` applied to 2 text arguments.
+
+The directive, which is the part enclosed in angular brackets, consists of a label followed by attributes. The label is
+given by a word or a quote. Following the label, it is possible to insert attributes. An attribute is a
 key-value pair. The key and value is delimited by a colon `:`.
 
-**Example:** `(p id:opening class:fancy)` encodes the command `p` with attributes `id:opening` and `class:fancy`.
+**Example:** `<p id:opening class:fancy>` encodes the directive `p` with attributes `id:opening` and `class:fancy`.
 
 An attribute key not followed by a colon is allowed. The value of such an attribute is considered to be an empty
 argument.
 
-**Example:** `(input type:checkbox checked)` encodes the command `input`. It has two attributes: `type` with value
-`checkbox` and `checked` with value `{}`.
+**Example:** `<input type:checkbox checked>` has the label `input`. It has two attributes: `type` with value `checkbox`
+and `checked` with value `{}`.
 
-An applied command with zero arguments is inserted as an argument into an applied command argument.
+Directives can be inserted as arguments in a directive expression. They are interpreted as directive expressions that
+have zero arguments.
 
-**Example:** From `(cmd0):arg1:arg2:(cmd3):arg4:arg5` it is understood that arguments continue to be applied to the
-main command. The applied command is not equal to `(cmd0):arg1:arg2:{ (cmd3):arg4:arg5 }`.
+**Example:** In `<cmd0>:arg1:arg2:<cmd3>:arg4:arg5`, `<cmd3>` is a directive expression with zero arguments. `<cmd0>`
+is a directive expression with 5 arguments.
 
-######################################
-TODO: write about command composition: `(cmd1):arg1:arg2:( ):(cmd2):arg3:arg4` is equal to
-`(cmd1):arg1:arg2:{ (cmd2):arg3:arg4 }`
+The *precedence operator* `<>` is a special operator that can be used in directive expressions. It applies the directive
+expression on the right-hand side as an argument to the directive expression on the left-hand side.
+
+**Example:** `<bold>:<>:<italic>:text` is equivalent to `<bold>:{ <italic>:text }`.
+
+#### Tag notation
+
+In tag notation, tags are used to produce directive expressions with one argument. Tag notation is intended to be used
+for markup. Tags are used as opening and closing brackets.
+
+Tag notation encodes a directive with a single argument.
+
+**Example:** `<tag:> arg </tag>`.
 
 ### Compound argument
 
@@ -397,8 +413,8 @@ argument, thus is not enclosed in brackets.
 
 ### Reserved characters
 
-Brackets `(`, `)`, `[`, `]`, `{`, `}`, `⟨`, `⟩`, quotes `"`, colons `:` and semicolons `;` are *reserved characters*.
-They cannot be used in text unless they are escaped.
+The brackets `<`, `>`, `[`, `]`, `{`, `}`, quotes `"`, colons `:` and semicolons `;` are *reserved characters*. They
+cannot be used in text unless they are escaped.
 
 ### Escape character
 
@@ -409,11 +425,11 @@ not.
 
 ### Special escape sequences
 
-Colons `:` and parentheses `(` `)` are often used in regular text, therefore it could be inconvenient that they are
-reserved. Therefore, some special escape sequences are allowed: `::` inserts a colon as text, instead of being parsed as
-a reserved character. Similarly, `((` and `))` are parsed as text parentheses.
+Colons `:` are sometimes used in regular text, therefore it could be inconvenient that they are reserved. Therefore,
+some special escape sequences are allowed: `::` inserts a colon as text, instead of being parsed as a reserved
+character.
 
-**Example:** `Price:: 300€ ((£265))` parses to the text `Price: 300€ (£265)`.
+**Example:** `Price:: 300€` parses to the text `Price: 300€`.
 
 ### Whitespace equivalence and significance
 
@@ -442,9 +458,10 @@ by a text glyph, the word is parsed as text as normal.
 ## Semantics
 
 **UDL** dictates the syntax of expressions and arguments, but it does not dictate their semantics or how data structures
-are encoded. The semantics, such as the validity of commands, dictionary keys and expression composition, are determined
-when a **UDL**-based format is defined. This is similar to how **XML** and **JSON** are metalanguages. On their own,
-they only determine if a document is syntactically well-formed, but leave questions of validity to a format implementer.
+are encoded. The semantics, such as the validity of directive expressions, dictionary keys and expression composition,
+are determined when a **UDL**-based format is defined. This is similar to how **XML** and **JSON** are metalanguages. On
+their own, they only determine if a document is syntactically well-formed, but leave questions of validity to a format
+implementer.
 
 A set of data structures can be encoded in **UDL** in many arbitrary ways. Thus, an implementer must define a specific
 encoding for each of them. An implementer must also define whether the document root is an expression, a sequence or
@@ -452,87 +469,82 @@ dictionary. This can be done by writing documentation, using a schema, or prefer
 procedures in a program. Once this is done, one has a format with well-defined syntax and semantics.
 
 Although there are no definite rules regarding how a data structure should be encoded, there are some best practices
-when it comes to what expressions and arguments represent. Following these practices while implementing an encoding
+when it comes to what expressions and variants represent. Following these practices while implementing an encoding
 makes **UDL**-based formats more uniform, which makes them more easily understood. Below, the best practices regarding
 encodings of expressions and arguments are described.
 
-### Recursive variants semantics
+### Expression and argument semantics
 
-Every structural variant represents an encoded data structure. Internally, the variants expressions (empty, singletons
-and compounds), sequences, dictionaries and commands recursively contain other structures. This simply means that
-data structures vary in complexity, and complex structures are made up from simpler structures. For complex structures,
-one must split the data structure into multiple parts, and encode each part using the variant that best fits. One must
-also decide which variant best encodes the complex structure itself.
+An expression encodes a data structure in a canonical or default way. Arguments of an expression provide the information
+required by the expression. Arguments themselves may recursively consist of inner expressions.
 
-**Example:** `Binomial { n: 10; p: 50% }` is an expression that represents a distribution. Internally, it consists of
-two arguments, one that specifies distribution, and the second which specifies distribution parameters.
+This simply means that data structures vary in complexity, and complex structures are made up from simpler structures.
+For complex structures, one must split the data structure into multiple parts, and encode each part using the variant
+that best fits. One must also decide which variant best composes the arguments.
 
-**Example:** `Markup (cmd):[0]:{ (bold):Markup } Markup` is an expression that represents markup. Its arguments may
-either be text, or structures that also represent markup. In this example, the applied command represents markup.
-Internally, the command takes a sequence argument and lastly an argument representing markup, because this is the data
-it requires, but to the outer expression, this is irrelevant.
+### Variant semantics
 
-### Text semantics
+This is a summary of what kind of structures the 6 structural variants encodes.
 
-A text argument is the most primitive type of argument. Unsurprisingly, it is used to encode primitives such as text
-strings, numbers and booleans. It can also be used to encode slightly more complex text based structures, such as dates.
+| Variant                   | Use                                                     |
+|---------------------------|---------------------------------------------------------|
+| Text                      | Encodes a primitive value.                              |
+| Expression/Compound/Empty | Encodes a data structure in a canonical or default way. |
+| Sequence                  | Encodes multiple data structures.                       |
+| Dictionary                | Encodes multiple named data structures.                 |
+| Directive                 | Encodes a data structure in a specific way.             |
 
-### Sequence semantics
+### Directive semantics
 
-A sequence represents a collection of multiple values, such as an array, ordered list, unordered list, set or tuple.
-Usually, a sequence contains values that are not strongly dependent on each other.
+As an encoding of a data structure, a directive expression encodes a structure in a specific way. However, there are
+two dimensions to a directive:
 
-### Dictionary semantics
+- First, a directive describes how input encodes a data structure.
+- Secondly, a directive describes how input encodes an action (An action is a side effect or stateful change or query to
+  the environment). A directive is pure if it does not depend on the environment, and impure otherwise.
 
-A dictionary represents a collection of named values or mappings.
+Given this, a directive expression represents either an encoded data structure, an encoded action, or a mix of both. A
+directive could be seen as a generalization of **XML**-tags, **LaTeX**-commands/macros and text placeholders/tokens.
 
-### Command semantics
+**Example:** In **XML**-like markup, tags are used to mark up and add semantics to text. Tags do not encode any action.
+In **UDL**, tags can be encoded as directives, which when applied to text, encodes semantic text. For example, **HTML**
+`<span class="italic">text</span>` corresponds to **UDL** `<span: class:italic>text</>`.
 
-Commands are used to encode a range of different things, such as:
+**Example:** In `<sender> sent <amount> to <recipient>.`, directives are used to represent tokens/placeholders.
 
-- macros that perform computations, pure and impure actions, or substitutions using their arguments.
-- tags or markings that add semantics to content in markup.
-- tokens which represent input locations in a string.
+**Example:** In **LaTeX**-like markup, commands/macros are used to perform substitutions, computations and stateful
+actions (for example incrementing a section count, or including a package). In **UDL**, commands can be trivially
+encoded as directives. For example, **LaTeX** `\frac{2a}{b}` corresponds to **UDL** `<frac>:2a:b`.
 
-**Example:** For **XML**-like markup, a command represents a tag, which adds semantics to its contents.
+**Example:** `<set>:x:100` encodes an action which sets the variable `x` to `100`. It encodes an empty data structure,
+since this is purely a command.
 
-**Example:** For **LaTeX**-like markup, a command represents a macro which may perform anything from stateful
-modifications to the environment, to simple computations and substitutions.
+There are two notations for directive expressions: command notation and tag notation. Command notation is the default.
+Tag notation is purely purposed to markup. It produces a directive expression with one argument which encodes semantic
+text.
 
-**Example:** In `(sender) sent (amount) to (recipient).`, commands represent tokens, which are placeholders for
-values within text.
+**Example:** `<bold:>Bold<br>text</>` is a conventional use of tag notation, since `Bold<br>text` is markup and the
+expression returns semantic text.
 
-Attributes are used to add metadata to a command, or to modify its function in some way.
+**Example:** `<var:>x</>` is an unconventional use of tag notation, since `x` is not markup, `var` encodes an action
+retrieving a variable and the expression does not return semantic text.
 
-### Compound semantics
+### Primitive encoding
 
-A compound is a way of composing arguments. Some structures, such as markup, are inherently encoded as a compound.
+Primitive values are trivially encoded as text.
 
-### Text encoding
-
-Text is trivially encoded as a text argument.
-
-### Number encoding
-
-Numbers, including booleans, are encoded as text. Valid encodings are determined by data type.
-
-**Example:** `400`, `2.45`, `True` or `50%`.
+- Strings are encoded as text.
+- Numbers, including booleans, are encoded as text. Valid encodings are further determined by number type.
 
 ### Markup encoding
 
-Markup is a hierarchical structure consisting of text and commands/tags that add semantics to the text or perform some
-action or substitution. Markup is encoded as an expression with an arbitrary number of arguments. An argument is either
-text, empty, or a tag command.
+Markup is encoded as an expression containing an arbitrary number of text and directive expression arguments.
+Directives that produce semantic text and which do not represent any action could be encoded as tags, but this is not
+required. Other types of macros, which may represent actions, is encoded in command notation.
 
-### Sequences / arrays / lists / sets / tuples encoding
+**Example:** The preprocessor examples above demonstrate markup encoding.
 
-A sequence is trivially encoded as a dictionary argument.
-
-### Dictionaries / maps / objects encoding
-
-A dictionary is trivially encoded as a dictionary argument.
-
-### Structs / product types encoding
+### Struct / product type encoding
 
 Structs that have no fields are encoded as an empty expression. Structs that have fields are either encoded as a
 dictionary or a sequence, depending on if they are named or positional.
@@ -541,9 +553,9 @@ dictionary or a sequence, depending on if they are named or positional.
 |-------------------|--------------------------|
 | Named fields      | `{ x: 10; y: 30; z: 5 }` |
 | Positional fields | `[10; 30; 5]`            |
-| No fields         | ` `                      |
+| No fields         | `{}`                     |
 
-### Enums / sum types encoding
+### Enum / sum type encoding
 
 Enums are encoded as 1 or 2 arguments. The first argument is a text argument that specifies the enum variant. If the
 enum has no fields, it does not have a second argument. Otherwise, the second argument is either a sequence or a

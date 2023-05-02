@@ -20,8 +20,9 @@ pub enum Token {
     SequenceClosing(Position),
     Word(Position, String),
     Quote(Position, String),
-    CommandOpening(Position),
-    CommandClosing(Position),
+    DirectiveOpening(Position),
+    ClosingDirectiveOpening(Position),
+    DirectiveClosing(Position),
     Whitespace(Position),
     End(Position),
 }
@@ -171,36 +172,46 @@ impl <'a> CharIter<'a> {
                     self.flush_word(&mut tokens);
                     tokens.push(Token::SequenceClosing(self.position()));
                     self.next();
-                } else if c == '(' {
-                    if let Some('(') = self.cn {
-                        self.put_char('(');
-                        loop {
-                            self.next();
-                            if let Some('(') = self.cn {
-                                self.put_char('(');
-                            } else {
-                                break;
+                } else if c == '<' {
+                    if let Some(cn) = self.cn {
+                        if cn == '<' {
+                            self.put_char('<');
+                            loop {
+                                self.next();
+                                if let Some('<') = self.cn {
+                                    self.put_char('<');
+                                } else {
+                                    break;
+                                };
                             };
-                        };
+                        } else if cn == '/' {
+                            self.flush_word(&mut tokens);
+                            tokens.push(Token::ClosingDirectiveOpening(self.position()));
+                            self.next(); self.next();
+                        } else {
+                            self.flush_word(&mut tokens);
+                            tokens.push(Token::DirectiveOpening(self.position()));
+                            self.next();
+                        }
                     } else {
                         self.flush_word(&mut tokens);
-                        tokens.push(Token::CommandOpening(self.position()));
+                        tokens.push(Token::DirectiveOpening(self.position()));
                         self.next();
                     };
-                } else if c == ')' {
-                    if let Some(')') = self.cn {
-                        self.put_char(')');
+                } else if c == '>' {
+                    if let Some('>') = self.cn {
+                        self.put_char('>');
                         loop {
                             self.next();
-                            if let Some(')') = self.cn {
-                                self.put_char(')');
+                            if let Some('>') = self.cn {
+                                self.put_char('>');
                             } else {
                                 break;
                             };
                         };
                     } else {
                         self.flush_word(&mut tokens);
-                        tokens.push(Token::CommandClosing(self.position()));
+                        tokens.push(Token::DirectiveClosing(self.position()));
                         self.next();
                     };
                 } else if c == ';' {
@@ -229,11 +240,11 @@ impl <'a> CharIter<'a> {
                         self.next();
                     } else {
                         if let Some(cn) = self.cn {
-                            if cn.is_whitespace() || cn == '#' || cn == ';' || cn == ':' || cn == '}' || cn == ']' || cn == ')' {
+                            if cn.is_whitespace() || cn == '#' || cn == ';' || cn == ':' || cn == '}' || cn == ']' || cn == '>' {
                                 self.flush_word(&mut tokens);
                                 tokens.push(Token::Comment(self.position()));
                                 self.skip_line();
-                            } else if cn == '{' || cn == '[' || cn == '(' {
+                            } else if cn == '{' || cn == '[' || cn == '<' {
                                 return Err(LexError::CommentedBracket(self.position()));
                             } else {
                                 self.put_char('#');

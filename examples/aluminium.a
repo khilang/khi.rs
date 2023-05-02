@@ -2,7 +2,7 @@
 
 
 title: Aluminium;
-shortdesc: The (@):element:{chemical element} Aluminium.;
+shortdesc: The <@>:element:{chemical element} aluminium.;
 uuid: 0c5aacfe-d828-43c7-a530-12a802af1df4;
 type: chemical-element;
 tags: [metal; common];
@@ -29,7 +29,7 @@ refs: {
   atomnum: 1a5e1974-a78c-4820-afeb-79bef6974814;
   react: ab7d8a1f-c028-4466-9bb2-41a39d153241;
   aloxide: c1ff08e7-a88f-42d5-83c3-6adc4835a07b;
-  stability: b3b13474-4fe3-4556-9568-925c066916a5;
+  stab: b3b13474-4fe3-4556-9568-925c066916a5;
   purity: 40786551-85c4-461c-ba6e-4d54d5863820;
   ion: effd5c7a-da31-4357-a94c-91343e9a05eb;
   metal: 84333088-cfcc-4e78-8d3f-7307dcab144b;
@@ -37,20 +37,20 @@ refs: {
 
 content: {
 
-  (@):self:(title) is a (@):element:{chemical element} with
-  (@):chemsym:{chemical symbol} (chemsym) and (@):atomnum:{atomic number}
-  (atomnum).
+  <@>:self:<title> is a <@>:element:{chemical element} with
+  <@>:chemsym:{chemical symbol} <chemsym> and <@>:atomnum:{atomic number}
+  <atomnum>.
 
-  (p)
+  <p>
 
-  In (@):purity:pure form, it is a highly (@):react:reactive (@):metal:metal,
-  but normally a thin coat of (@):aloxide:{aluminium oxide} forms on its
-  surface, keeping it highly (@):stability:{stable}.
+  In <@>:purity:pure form, it is a highly <@>:react:reactive <@>:metal:{metal},
+  but normally a thin coat of <@>:aloxide:{aluminium oxide} forms on its
+  surface, keeping it highly <@>:stab:{stable}.
 
-  (p)
+  <p>
 
-  In nature, it occurs as the (@):ion:ion ($):{Al^{3+}}. It constitutes 8.2%
-  of the earth's crust, making it the most common (@):metal:metal found there.
+  In nature, it occurs as the <@>:ion:ion <$>:{Al^{3+}}. It constitutes 8.2%
+  of the earth's crust, making it the most common <@>:metal:metal found there.
 
   ...
 

@@ -11,7 +11,7 @@
 
 
 use std::fmt::format;
-use crate::ast::{ParsedArgument, ParsedCommand, ParsedCompound, ParsedDictionary, ParsedExpression, ParsedSequence};
+use crate::ast::{ParsedArgument, ParsedDirective, ParsedCompound, ParsedDictionary, ParsedExpression, ParsedSequence};
 use crate::lex::Position;
 use crate::tex::preprocess::PreprocessorError::{IllegalDictionary, IllegalSequence};
 
@@ -56,8 +56,8 @@ fn write_tex_inner(expression: &ParsedExpression, output: &mut String, level: u3
 }
 
 
-fn write_macro(command: &ParsedCommand, output: &mut String, level: u32) -> Result<(), PreprocessorError> {
-    let name = &command.command;
+fn write_macro(command: &ParsedDirective, output: &mut String, level: u32) -> Result<(), PreprocessorError> {
+    let name = &command.directive;
     if name.starts_with('@') {
         return Ok(());
     } else if name.eq("$") {
@@ -140,6 +140,13 @@ fn push_indent(output: &mut String, level: u32) {
         output.push(' ');
         i += 1;
     }
+}
+
+
+pub enum LastState {
+    Whitespace,
+    Underscore,
+    Caret,
 }
 
 

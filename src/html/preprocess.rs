@@ -1,8 +1,7 @@
 //! Generation of HTML from UDL.
 
 
-use std::process::Output;
-use crate::ast::{ParsedArgument, ParsedCommand, ParsedDictionary, ParsedExpression, ParsedSequence, ParsedText};
+use crate::ast::{ParsedArgument, ParsedDirective, ParsedDictionary, ParsedExpression, ParsedSequence, ParsedText};
 use crate::lex::Position;
 
 
@@ -69,9 +68,9 @@ fn write_html_inner(output: &mut String, expression: &ParsedExpression, indent: 
 }
 
 
-fn write_html_tag(output: &mut String, command: &ParsedCommand, indent: bool, level: u32) -> Result<(), PreprocessorError> {
+fn write_html_tag(output: &mut String, command: &ParsedDirective, indent: bool, level: u32) -> Result<(), PreprocessorError> {
     let mut attribute_iter = command.attributes.iter();
-    let name = &command.command;
+    let name = &command.directive;
     // Macros // todo: set up arbitrary macro names.
     if name.starts_with('@') {
         return if name == "@doctype" {

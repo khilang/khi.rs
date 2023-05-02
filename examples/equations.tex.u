@@ -4,41 +4,42 @@
 # cargo run --features="tex" --bin udl-tex-cmd -- examples/equations.tex.u
 
 
-(documentclass):article
+<documentclass>:article
 
-(usepackage):amsmath
+<usepackage>:amsmath
 
-(begin):document
+<begin>:document
 
-(section):Equations
+<section>:Equations
 
-  # Define a Sum-range command.
-  (newcommand):(SumRn):*:4:{
-    (sum)_{#1}^{#2 (dots) #3}{#4}
+  # Define a sum-range command.
+  <newcommand>:<SumRn>:*:4:{
+    <sum>_{#1}^{#2 <dots> #3} #4
   }
 
-  (begin):math
-    (SumRn):k:0:100:k
-    = 0 + 1 + 2 + (dots) + 99 + 100
+  <begin>:math
+    <SumRn>:k:0:100:k
+    = 0 + 1 + 2 + <dots> + 99 + 100
+    = (0 + 100) + (1 + 99) + <dots> (49 + 51) + 50
     = 5050
-  (end):math
+  <end>:math
 
-  (begin):math
-    (SumRn):k:0:n:k
-    = 0 + 1 + 2 + (dots) + ((n - 1)) + n
-    = n (cfrac):n:2 + (cfrac):n:2
-    = (cfrac):n^2:2 + (cfrac):n:2
-    = n (cdot) (cfrac):{n + 1}:2
-  (end):math
+  <begin>:math
+    <SumRn>:k:0:n:k
+    = 0 + 1 + 2 + <dots> + (n - 1) + n
+    = n <cfrac>:n:2 + <cfrac>:n:2
+    = <cfrac>:n^2:2 + <cfrac>:n:2
+    = n <cdot> <cfrac>:{n + 1}:2
+  <end>:math
 
-(section):Matrices
+<section>:Matrices
 
-  (begin):math
-    (mathbf):X = (begin):bmatrix (@tabulate-sq):3:[
+  <begin>:math
+    <mathbf>:X = <begin>:bmatrix <@tabulate-sq>:3:[
       1;0;0;
       0;1;0;
       0;0;1;
-    ] (end):bmatrix
-  (end):math
+    ] <end>:bmatrix
+  <end>:math
 
-(end):document
+<end>:document

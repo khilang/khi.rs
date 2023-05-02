@@ -16,7 +16,7 @@ pub enum ParsedExpression {
     Text(ParsedText),
     Sequence(ParsedSequence),
     Dictionary(ParsedDictionary),
-    Command(ParsedCommand),
+    Command(ParsedDirective),
     Compound(ParsedCompound),
 }
 
@@ -73,7 +73,7 @@ impl ParsedExpression {
             ParsedArgument::Text(ParsedText { .. }) => 1,
             ParsedArgument::Sequence(ParsedSequence { .. }) => 1,
             ParsedArgument::Dictionary(ParsedDictionary { .. }) => 1,
-            ParsedArgument::Command(ParsedCommand { .. }) => 1,
+            ParsedArgument::Command(ParsedDirective { .. }) => 1,
             ParsedArgument::Compound(ParsedCompound { arguments, .. }) => arguments.len(),
         }.clone()
     }
@@ -103,7 +103,7 @@ impl ParsedArgument {
             ParsedArgument::Text(ParsedText { from, .. }) => from,
             ParsedArgument::Sequence(ParsedSequence { from, .. }) => from,
             ParsedArgument::Dictionary(ParsedDictionary { from, .. }) => from,
-            ParsedArgument::Command(ParsedCommand { from, .. }) => from,
+            ParsedArgument::Command(ParsedDirective { from, .. }) => from,
             ParsedArgument::Compound(ParsedCompound { from, .. }) => from,
         }.clone()
     }
@@ -114,7 +114,7 @@ impl ParsedArgument {
             ParsedArgument::Text(ParsedText { to, .. }) => to,
             ParsedArgument::Sequence(ParsedSequence { to, .. }) => to,
             ParsedArgument::Dictionary(ParsedDictionary { to, .. }) => to,
-            ParsedArgument::Command(ParsedCommand { to, .. }) => to,
+            ParsedArgument::Command(ParsedDirective { to, .. }) => to,
             ParsedArgument::Compound(ParsedCompound { to, .. }) => to,
         }.clone()
     }
@@ -189,9 +189,9 @@ impl From<ParsedDictionary> for ParsedArgument {
 }
 
 
-impl From<ParsedCommand> for ParsedArgument {
+impl From<ParsedDirective> for ParsedArgument {
 
-    fn from(command: ParsedCommand) -> Self {
+    fn from(command: ParsedDirective) -> Self {
         ParsedArgument::Command(command)
     }
 
@@ -231,8 +231,8 @@ pub type ParsedAttribute = ParsedEntry;
 
 
 #[derive(PartialEq, Eq, Clone)]
-pub struct ParsedCommand {
-    pub command: String,
+pub struct ParsedDirective {
+    pub directive: String,
     pub attributes: Vec<ParsedAttribute>,
     pub arguments: Vec<ParsedExpression>,
     pub from: Position,
@@ -282,8 +282,8 @@ impl ParsedCompound {
 /// Check if a string has reserved characters. Such a string must be escaped.
 pub fn has_reserved(string: &str) -> bool {
     string.contains(|c: char| {
-        c.is_whitespace() || c == ':' || c == ';' || c == '(' || c == '[' || c == '{' || c == '⟨' ||
-            c == ')' || c == ']' || c == '}' || c == '⟩' || c == '"' || c == '\\'
+        c.is_whitespace() || c == ':' || c == ';' || c == '<' || c == '[' || c == '{' || c == '⟨' ||
+            c == '>' || c == ']' || c == '}' || c == '⟩' || c == '"' || c == '\\'
     })
 }
 
@@ -399,11 +399,11 @@ impl Display for ParsedCompound {
 }
 
 
-impl Display for ParsedCommand {
+impl Display for ParsedDirective {
 
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         // Command opening and name
-        write!(f, "({}", &self.command)?;
+        write!(f, "<{}", &self.directive)?;
         // Command attributes
         let len = self.attributes.len();
         if len > 0 {
@@ -418,7 +418,7 @@ impl Display for ParsedCommand {
             i += 1;
         }
         // Command closing
-        write!(f, ")")?;
+        write!(f, ">")?;
         // Command arguments
         let mut arguments = self.arguments.iter();
         loop {
