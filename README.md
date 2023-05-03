@@ -475,24 +475,26 @@ encodings of expressions and arguments are described.
 
 ### Expression and argument semantics
 
-An expression encodes a data structure in a canonical or default way. Arguments of an expression provide the information
-required by the expression. Arguments themselves may recursively consist of inner expressions.
+An expression encodes a data structure in a canonical or default way. An expression consists of an arbitrary number of
+arguments, which provide the information required by the expression. From the point of view of the expression, an
+argument may be viewed either as an expression itself which encodes a substructure that the outer expression is built
+from, or simply as a plain variant that provides information to the expression.
 
-This simply means that data structures vary in complexity, and complex structures are made up from simpler structures.
-For complex structures, one must split the data structure into multiple parts, and encode each part using the variant
-that best fits. One must also decide which variant best composes the arguments.
+Here is a summary of possible interpretations of an argument, and what such an argument encodes.
 
-### Variant semantics
+| Argument                            | Use                                                     |
+|-------------------------------------|---------------------------------------------------------|
+| Text                                | Encodes a primitive value.                              |
+| Sequence                            | Encodes multiple data structures.                       |
+| Dictionary                          | Encodes multiple named data structures.                 |
+| Directive                           | Encodes a data structure in a specific way.             |
+| Expression/Singleton/Compound/Empty | Encodes a data structure in a canonical or default way. |
 
-This is a summary of what kind of structures the 6 structural variants encodes.
+Given that some arguments may be interpreted in multiple ways, it is assumed that the interpretation of an argument is
+provided when the **UDL**-based format is defined.
 
-| Variant                   | Use                                                     |
-|---------------------------|---------------------------------------------------------|
-| Text                      | Encodes a primitive value.                              |
-| Expression/Compound/Empty | Encodes a data structure in a canonical or default way. |
-| Sequence                  | Encodes multiple data structures.                       |
-| Dictionary                | Encodes multiple named data structures.                 |
-| Directive                 | Encodes a data structure in a specific way.             |
+When defining complex structures, one must split the data structure into multiple arguments, and encode each part using
+the variant that best fits.
 
 ### Directive semantics
 
