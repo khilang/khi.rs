@@ -31,9 +31,36 @@
 
 
 # Directive expression
-<direxpr> ::= "<" <key> <attr> ">"<dirarg>
-            | "<" <key> ":" <attr> ">" <expr> "</" <key> ">"
-            | "<" <key> ":" <attr> ">" <expr> "</" ">"
+<direxpr> ::= <cmdexpr>
+            | <tagexpr>
+
+
+# Command expression
+<cmdexpr> ::= "<" <key> <attr> ">"<cmdarg>
+
+
+# Command argument
+<cmdarg> ::= < >
+           | ":"<key><cmdarg>
+           | ":""{" <expr> "}"<cmdarg>
+           | ":""{" <dictp> "}"<cmdarg>
+           | ":""[" <seq> "]"<cmdarg>
+           | ":""<" <key> <attr> ">"<cmdarg>
+           | ":""<>"":"<cmdexpr>
+
+
+# Tag expression
+<tagexpr> ::= "<+" <key> <attr> ">"<tagarg> <expr> "<-" <key> ">"
+            | "<+" <key> <attr> ">"<tagarg> <expr> "<-" ">"
+
+
+# Tag argument
+<tagarg> ::= < >
+           | ":"<key><tagarg>
+           | ":""{" <expr> "}"<tagarg>
+           | ":""{" <dictp> "}"<tagarg>
+           | ":""[" <seq> "]"<tagarg>
+           | ":""<" <key> <attr> ">"<tagarg>
 
 
 # Directive attribute
@@ -43,17 +70,7 @@
          | <key> ":" "{" <expr> "}" <attr>
          | <key> ":" "{" <dictp> "}" <attr>
          | <key> ":" "[" <seq> "]" <attr>
-         | <key> ":" <direxpr> <attr>
-
-
-# Directive argument
-<dirarg> ::= < >
-           | ":"<key><dirarg>
-           | ":""{" <expr> "}"<dirarg>
-           | ":""{" <dictp> "}"<dirarg>
-           | ":""[" <seq> "]"<dirarg>
-           | ":""<" <key> <attr> ">"<dirarg>
-           | ":""<"">"":"<direxpr>
+         | <key> ":" <cmdexpr> <attr>
 
 
 <text> ::= <words>

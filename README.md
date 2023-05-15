@@ -8,12 +8,12 @@ A Rust parser for **UDL** (Universal Data Language).
 formats that are read and hand-coded by users. Such formats are mainly configuration and markup formats, or a mix
 thereof.
 
-**UDL** natively supports the universal data structures found in other programming languages and formats, such as
+**UDL** natively supports the universal data structures found in other programming languages and formats such as
 **XML**, **JSON** and **LaTeX**. It can express both structured data (dictionaries, sequences, hierarchies, values) and
 unstructured data (text, markup), and it can express complex structures composed of arbitrary combinations of such data.
 
 **UDL** is a textual format focused on being human-readable and writable. A well formatted **UDL**-document is easy to
-read, understand and edit. The format is concise and has minimal syntax noise. Few characters are needed to structure a
+read, understand and edit. The format is concise and has minimal syntax noise; few characters are needed to structure a
 document. It is practical and convenient for hand-coding and thus as a source format. Therefore, the format is suitable
 as a basis for configuration and markup formats.
 
@@ -57,6 +57,7 @@ should be compared to other formats encoding the same data.
 
 Notes:
 - Macro application looks like this: `<macro>:arg1:arg2:...:argN`. Arguments are appended with a colon.
+- Macros can also be expressed with tags. This is a macro with 1 argument: `<+macro>arg<-macro>`.
 - The `@` macro inserts a link. It takes two arguments: the first argument is the article to link to, and the second is
   the link label that will appear in the article.
 - The `title` macro takes no arguments and is substituted for the article title.
@@ -110,7 +111,7 @@ content: {
 
   <p>
 
-  In nature, it occurs as the <@>:ion:ion <$>:{Al^{3+}}. It constitutes 8.2%
+  In nature, it occurs as the <@>:ion:ion <+$>Al^{3+}<-$>. It constitutes 8.2%
   of the earth's crust, making it the most common <@>:metal:metal found there.
 
   ...
@@ -123,37 +124,36 @@ content: {
 This is an example of a document written in a **UDL**-based **HTML** preprocessor input format. The preprocessor can
 compile this document to **HTML**.
 
-The purpose of this example is to exhibit a **UDL**-based encoding of markup and **XML**-like structures.
+The purpose of this example is to showcase a **UDL**-based encoding of markup and **XML**-like structures.
 
-Compare this document to the corresponding **HTML** document. In terms of verbosity, the **UDL** document does not
-require closing tags. In terms of syntax noise, the **UDL** document does not require quotes around attribute values.
+Compare this document to the corresponding **HTML** document. In terms of verbosity and syntax noise, **UDL** allows
+short and long closing tags. Both are useful in different cases. **UDL** does not require quotes around attribute
+values.
 
 Notes:
-- In this format, tags and macros are distinguished with the `@` symbol. Macros start with `@` while regular tags only
-  consist of letters.
-- Tags can take zero or one argument. A tag with zero arguments is a self-closing tag, and a tag with an argument uses
-  the argument as its inner content.
-- The `@doctype` macro substitutes for `<!doctype html>`.
+- In this format, regular markup tags and special macros are distinguished by the `@` symbol. Macros start with `@`
+  while regular tags only consist of letters.
+- The `@doctype` macro substitutes itself for `<!doctype html>`.
 
 ```
 <@doctype>
-<html:> # <tag:> is an opening tag and </tag> or </> is a closing tag.
-  <head:>
-    <title:><@title></>
-    <script: src:script.js></>
-  </head>
-  <body:>
-    <h1: id:main-heading><@title></>
-    <p:>Hello world!</> # These two paragraph tags are equivalent.
+<+html> # <+tag> is an opening tag and <-tag> or <-> is a closing tag.
+  <+head>
+    <+title><@title><->
+    <+script src:script.js><->
+  <-head>
+  <+body>
+    <+h1 id:main-heading><@title><->
+    <+p>Hello world!<-> # These two paragraph notations are equivalent.
     <p>:{Hello world!}
     <img src:frontpage.jpg>
-    <div: class:dark-background><p:>
-      This is a paragraph <br>
+    <+div class:dark-background><+p>
+      This is a paragraph<br>
       with a line break.
-      <em: class:italic-text>This text is italic.</>
-    </></>
-  </body>
-</html>
+      <+em class:italic-text>This text is italic.<->
+    <-><->
+  <-body>
+<-html>
 ```
 
 ### TeX preprocessor example
@@ -161,7 +161,7 @@ Notes:
 This is an example of a document written in a **UDL**-based **LaTeX** preprocessor input format. The preprocessor can
 compile this document to **LaTeX**.
 
-The purpose of this example is to exhibit a **UDL**-based encoding of **LaTeX**-like markup.
+The purpose of this example is to showcase a **UDL**-based encoding of **LaTeX**-like markup.
 
 Compare this document to the corresponding **LaTeX** document. They are similar, but one benefit of the **UDL** document
 is that the arguments applied to a command can be determined from syntax alone.
@@ -172,7 +172,7 @@ mathematical notation, and this encoding could be used to encode **LaTeX**-math,
 Notes:
 - Preprocessor macros start with `@` and regular commands consist only of letters.
 - The `@tabulate-sq` automatically tabulates a square grid, such as a matrix. It takes a number and a sequence of
-  the tabulated values.
+  tabulated values.
 
 ```
 <documentclass>:article
@@ -378,8 +378,8 @@ argument.
 **Example:** `<input type:checkbox checked>` has the label `input`. It has two attributes: `type` with value `checkbox`
 and `checked` with value `{}`.
 
-Directives can be inserted as arguments in a directive expression. They are interpreted as directive expressions that
-have zero arguments.
+Directives can be inserted as arguments into a directive expression. There they are interpreted as directive expressions
+that have zero arguments.
 
 **Example:** In `<cmd0>:arg1:arg2:<cmd3>:arg4:arg5`, `<cmd3>` is a directive expression with zero arguments. `<cmd0>`
 is a directive expression with 5 arguments.
@@ -391,12 +391,36 @@ expression on the right-hand side as an argument to the directive expression on 
 
 #### Tag notation
 
-In tag notation, tags are used to produce directive expressions with one argument. Tag notation is intended to be used
-for markup. Tags are used as opening and closing brackets.
+In tag notation, tags are used to produce directive expressions. An opening tag is opened with a `+` while a closing tag
+is opened with a `-`.
 
-Tag notation encodes a directive with a single argument.
+**Example:** `<+tag> content <-tag>`.
 
-**Example:** `<tag:> arg </tag>`.
+The content enclosed by the tags is an expression that is appended as the last argument onto the directive expression
+represented by the tags.
+
+**Example:** `<+math>1 + 2 + 3 + <dots><-math>` is equivalent to `<math>:{1 + 2 + 3 + <dots>}`.
+
+Arguments may still be appended onto the opening tag, by using colons.
+
+**Example:** `<+Sum>:k:1:n 3k^2-2k <-Sum>` is equivalent to `<Sum>:k:1:n:{3k^2 - 2k}`.
+
+It is optional whether to include the directive name in the closing tag or not. In some cases this is useful, but in
+others this is too verbose.
+
+**Example:** `<+tag>arg<-tag>` is equivalent to `<+tag>arg<->`.
+
+Tag notation could in some cases increase the readability of a document.
+
+**Example:** In long scopes spanning several lines, it could be difficult to see which brackets belong to which
+directive, and where each scope ends. Tag notation can display the name of the scope in the closing tag, solving this
+problem.
+`<+html> Many lines and lots of stuff... <-html>`.
+
+**Example:** Sometimes, brackets are placed too tersely, and it is difficult to distinguish them. Tag notation makes it
+easier to distinguish scopes by introducing verbosity.
+`<bold>:{Bold <italic>:{italic <underline>:{underlined <strikethrough>:{strikethrough text}}}}` is easier to read as
+`<+bold>Bold <+italic>italic <+underline>underlined <+strikethrough>strikethrough text<-><-><-><->`.
 
 ### Compound argument
 
@@ -412,6 +436,8 @@ The root node of a **UDL** document is either an expression, a sequence or a dic
 argument, thus is not enclosed in brackets.
 
 ### Reserved characters
+
+TODO: Write about reserved character sequences, rather than reserved characters.
 
 The brackets `<`, `>`, `[`, `]`, `{`, `}`, quotes `"`, colons `:` and semicolons `;` are *reserved characters*. They
 cannot be used in text unless they are escaped.
@@ -510,7 +536,7 @@ directive could be seen as a generalization of **XML**-tags, **LaTeX**-commands/
 
 **Example:** In **XML**-like markup, tags are used to mark up and add semantics to text. Tags do not encode any action.
 In **UDL**, tags can be encoded as directives, which when applied to text, encodes semantic text. For example, **HTML**
-`<span class="italic">text</span>` corresponds to **UDL** `<span: class:italic>text</>`.
+`<span class="italic">text</span>` corresponds to **UDL** `<+span class:italic>text<->`.
 
 **Example:** In `<sender> sent <amount> to <recipient>.`, directives are used to represent tokens/placeholders.
 
@@ -520,16 +546,6 @@ encoded as directives. For example, **LaTeX** `\frac{2a}{b}` corresponds to **UD
 
 **Example:** `<set>:x:100` encodes an action which sets the variable `x` to `100`. It encodes an empty data structure,
 since this is purely a command.
-
-There are two notations for directive expressions: command notation and tag notation. Command notation is the default.
-Tag notation is purely purposed to markup. It produces a directive expression with one argument which encodes semantic
-text.
-
-**Example:** `<bold:>Bold<br>text</>` is a conventional use of tag notation, since `Bold<br>text` is markup and the
-expression returns semantic text.
-
-**Example:** `<var:>x</>` is an unconventional use of tag notation, since `x` is not markup, `var` encodes an action
-retrieving a variable and the expression does not return semantic text.
 
 ### Primitive encoding
 
@@ -549,25 +565,26 @@ required. Other types of macros, which may represent actions, is encoded in comm
 ### Struct / product type encoding
 
 Structs that have no fields are encoded as an empty expression. Structs that have fields are either encoded as a
-dictionary or a sequence, depending on if they are named or positional.
+dictionary or a sequence, depending on if they are named or positional. Optionally, the struct type could be included.
 
-| Variant           | Example                  |
-|-------------------|--------------------------|
-| Named fields      | `{ x: 10; y: 30; z: 5 }` |
-| Positional fields | `[10; 30; 5]`            |
-| No fields         | `{}`                     |
+| Variant           | Example                                                          |
+|-------------------|------------------------------------------------------------------|
+| Named fields      | `{ x: 10; y: 30; z: 5 }` or `Coordinates { x: 10; y: 30; z: 5 }` |
+| Positional fields | `[10; 30; 5]` or `Coordinates [10; 30; 5]`                       |
+| No fields         | `{}` or `Empty` or `Empty {}`                                    |
 
 ### Enum / sum type encoding
 
 Enums are encoded as 1 or 2 arguments. The first argument is a text argument that specifies the enum variant. If the
 enum has no fields, it does not have a second argument. Otherwise, the second argument is either a sequence or a
-dictionary, depending on if the enum has named or positional fields.
+dictionary, depending on if the enum has named or positional fields. Optionally, the enum type could be included, and
+one of several ways to encode this together with the variant is shown.
 
-| Variant           | Example                      |
-|-------------------|------------------------------|
-| Named fields      | `Binomial { n: 50; p: 10% }` |
-| Positional fields | `Uniform [0; 10]`            |
-| No fields         | `StandardNormal`             |
+| Variant           | Example                                                                    |
+|-------------------|----------------------------------------------------------------------------|
+| Named fields      | `Binomial { n: 50; p: 10% }` or `Distribution::Binomial { n: 50; p: 10% }` |
+| Positional fields | `Uniform [0; 10]` or `Distribution::Uniform [0; 10]`                       |
+| No fields         | `StandardNormal` or `Distribution::StandardNormal`                         |
 
 ## Purpose
 

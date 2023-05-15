@@ -5,6 +5,7 @@
 //! [parse_sequence_document] or [parse_dictionary_document].
 
 
+use std::fmt::{Debug, Display, Formatter};
 use std::slice::Iter;
 use crate::ast::{ParsedCompound, ParsedDictionary, ParsedEntry, ParsedExpression, ParsedSequence, ParsedText, ParsedAttribute, ParsedDirective};
 use crate::lex::{CharIter, LexError, Position, Token};
@@ -117,12 +118,14 @@ impl <'a> TokenIter<'a> {
             Token::Semicolon(position) => position,
             Token::Colon(position) => position,
             Token::Comment(position) => position,
+            Token::Diamond(position) => position,
+            Token::OpeningTagOpening(position) => position,
             Token::SequenceOpening(position) => position,
             Token::SequenceClosing(position) => position,
             Token::Word(position, ..) => position,
             Token::Quote(position, ..) => position,
             Token::DirectiveOpening(position) => position,
-            Token::ClosingDirectiveOpening(position) => position,
+            Token::ClosingTagOpening(position) => position,
             Token::DirectiveClosing(position) => position,
             Token::Whitespace(position) => position,
             Token::End(position) => position,
@@ -136,12 +139,14 @@ impl <'a> TokenIter<'a> {
             Token::Semicolon(position) => position,
             Token::Colon(position) => position,
             Token::Comment(position) => position,
+            Token::Diamond(position) => position,
+            Token::OpeningTagOpening(position) => position,
             Token::SequenceOpening(position) => position,
             Token::SequenceClosing(position) => position,
             Token::Word(position, ..) => position,
             Token::Quote(position, ..) => position,
             Token::DirectiveOpening(position) => position,
-            Token::ClosingDirectiveOpening(position) => position,
+            Token::ClosingTagOpening(position) => position,
             Token::DirectiveClosing(position) => position,
             Token::Whitespace(position) => position,
             Token::End(position) => position,
@@ -188,7 +193,7 @@ impl <'a> TokenIter<'a> {
                                 to = self.next_position();
                                 whitespace = false;
                             }
-                            Token::BracketOpening(..) | Token::BracketClosing(..) | Token::Semicolon(..) | Token::Colon(..) | Token::SequenceOpening(..) | Token::SequenceClosing(..) | Token::Quote(..) | Token::DirectiveOpening(..) | Token::ClosingDirectiveOpening(..) | Token::DirectiveClosing(..) | Token::End(..) => {
+                            Token::BracketOpening(..) | Token::BracketClosing(..) | Token::Semicolon(..) | Token::Colon(..) | Token::Diamond(..) | Token::OpeningTagOpening(..) | Token::SequenceOpening(..) | Token::SequenceClosing(..) | Token::Quote(..) | Token::DirectiveOpening(..) | Token::ClosingTagOpening(..) | Token::DirectiveClosing(..) | Token::End(..) => {
                                 break;
                             }
                         };
@@ -217,12 +222,12 @@ impl <'a> TokenIter<'a> {
                     let whitespace = self.is_whitespace();
                     arguments.push((sequence.into(), whitespace));
                 }
-                Token::DirectiveOpening(..) => {
+                Token::DirectiveOpening(..) | Token::OpeningTagOpening(..) => {
                     let directive = self.parse_directive_expression()?;
                     let whitespace = self.is_whitespace();
                     arguments.push((directive.into(), whitespace));
                 }
-                Token::BracketClosing(to) | Token::SequenceClosing(to) | Token::DirectiveClosing(to) | Token::Semicolon(to) | Token::Colon(to) | Token::End(to) | Token::ClosingDirectiveOpening(to) => {
+                Token::BracketClosing(to) | Token::SequenceClosing(to) | Token::Diamond(to) | Token::DirectiveClosing(to) | Token::Semicolon(to) | Token::Colon(to) | Token::End(to) | Token::ClosingTagOpening(to) => {
                     return if arguments.len() == 0 {
                         Ok(ParsedExpression::Empty(from, to.clone()))
                     } else if arguments.len() == 1 {
@@ -252,7 +257,7 @@ impl <'a> TokenIter<'a> {
             let element_from = self.position();
             self.skip_whitespace();
             match self.t {
-                Token::BracketOpening(..) | Token::SequenceOpening(..) | Token::DirectiveOpening(..) | Token::ClosingDirectiveOpening(..) | Token::Word(..) | Token::Quote(..) => {
+                Token::BracketOpening(..) | Token::SequenceOpening(..) | Token::DirectiveOpening(..) | Token::OpeningTagOpening(..) | Token::Word(..) | Token::Quote(..) => {
                     let expression = self.parse_expression()?;
                     elements.push(expression);
                     self.skip_whitespace();
@@ -267,7 +272,7 @@ impl <'a> TokenIter<'a> {
                     elements.push(ParsedExpression::Empty(element_from, element_to.clone()));
                     self.next();
                 }
-                Token::BracketClosing(position) | Token::SequenceClosing(position) | Token::DirectiveClosing(position) | Token::End(position) => {
+                Token::BracketClosing(position) | Token::SequenceClosing(position) | Token::DirectiveClosing(position) | Token::Diamond(position) | Token::ClosingTagOpening(position) | Token::End(position) => {
                     return Ok(ParsedSequence { elements, from, to: position.clone() });
                 }
                 Token::Colon(..) => {
@@ -307,7 +312,7 @@ impl <'a> TokenIter<'a> {
                     self.next();
                     continue;
                 },
-                Token::BracketOpening(to) | Token::DirectiveOpening(to) | Token::ClosingDirectiveOpening(to) | Token::DirectiveClosing(to) | Token::BracketClosing(to) | Token::End(to) | Token::Semicolon(to) | Token::SequenceOpening(to) | Token::SequenceClosing(to) => {
+                Token::BracketOpening(to) | Token::DirectiveOpening(to) | Token::Diamond(to) | Token::OpeningTagOpening(to) | Token::ClosingTagOpening(to) | Token::DirectiveClosing(to) | Token::BracketClosing(to) | Token::End(to) | Token::Semicolon(to) | Token::SequenceOpening(to) | Token::SequenceClosing(to) => {
                     return Ok(ParsedDictionary { entries, from, to: to.clone() });
                 }
                 Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
@@ -324,7 +329,7 @@ impl <'a> TokenIter<'a> {
                     self.next();
                     continue;
                 }
-                Token::BracketOpening(at) | Token::BracketClosing(at) | Token::SequenceOpening(at) | Token::SequenceClosing(at) | Token::Word(at, ..) | Token::Quote(at, ..) | Token::DirectiveOpening(at) | Token::ClosingDirectiveOpening(at) | Token::DirectiveClosing(at) | Token::End(at) => {
+                Token::BracketOpening(at) | Token::BracketClosing(at) | Token::SequenceOpening(at) | Token::Diamond(at) | Token::OpeningTagOpening(at) | Token::SequenceClosing(at) | Token::Word(at, ..) | Token::Quote(at, ..) | Token::DirectiveOpening(at) | Token::ClosingTagOpening(at) | Token::DirectiveClosing(at) | Token::End(at) => {
                     return Err(ParseError::ExpectedEntrySeparator(at.clone()));
                 }
                 Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
@@ -342,7 +347,7 @@ impl <'a> TokenIter<'a> {
                     self.next();
                     continue;
                 }
-                Token::Word(to, ..) | Token::Quote(to, ..) | Token::BracketOpening(to) | Token::SequenceOpening(to) | Token::DirectiveOpening(to) | Token::ClosingDirectiveOpening(to) | Token::End(to) | Token::BracketClosing(to) | Token::SequenceClosing(to) | Token::DirectiveClosing(to) | Token::Colon(to) => {
+                Token::Word(to, ..) | Token::Quote(to, ..) | Token::BracketOpening(to) | Token::Diamond(to) | Token::OpeningTagOpening(to) | Token::SequenceOpening(to) | Token::DirectiveOpening(to) | Token::ClosingTagOpening(to) | Token::End(to) | Token::BracketClosing(to) | Token::SequenceClosing(to) | Token::DirectiveClosing(to) | Token::Colon(to) => {
                     return Ok(ParsedDictionary { entries, from, to: to.clone() });
                 }
                 Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
@@ -350,22 +355,45 @@ impl <'a> TokenIter<'a> {
         };
     }
 
+
     /// Parse a directive expression.
     ///
     /// ```text
-    /// <direxpr> ::= "<" <key> <attr> ">"<dirarg>
-    ///             | "<" <key> ":" <attr> ">" <expr> "</" <key> ">"
-    ///             | "<" <key> ":" <attr> ">" <expr> "</" ">"
+    /// <direxpr> ::= <><cmdexpr>
+    ///             | <><tagexpr>
     ///
-    /// <dirarg> ::= < >
-    ///            | ":"<key><dirarg>
-    ///            | ":""{" <expr> "}"<dirarg>
-    ///            | ":""{" <dictp> "}"<dirarg>
-    ///            | ":""[" <seq> "]"<dirarg>
-    ///            | ":""<" <key> <attr> ">"<dirarg>
-    ///            | ":""<"">"":"<direxpr>
+    /// <attr> ::= <>
+    ///          | <key> <attr>
+    ///          | <key> ":" <key> <attr>
+    ///          | <key> ":" "{" <expr> "}" <attr>
+    ///          | <key> ":" "{" <dictp> "}" <attr>
+    ///          | <key> ":" "[" <seq> "]" <attr>
     /// ```
     pub fn parse_directive_expression(&mut self) -> Result<ParsedDirective, ParseError> {
+        if matches!(self.t, Token::DirectiveOpening(..)) {
+            self.parse_command_expression()
+        } else if matches!(self.t, Token::OpeningTagOpening(..)) {
+            self.parse_tag_expression()
+        } else {
+            Err(ParseError::ExpectedOpeningAngularBracket(self.position()))
+        }
+    }
+
+
+    /// Parse a command expression.
+    ///
+    /// ```text
+    /// <cmdexpr> ::= <>"<" <key> <attr> ">"<cmdarg>
+    ///
+    /// <cmdarg> ::= < >
+    ///            | <>":"<key><cmdarg>
+    ///            | <>":""{" <expr> "}"<cmdarg>
+    ///            | <>":""{" <dictp> "}"<cmdarg>
+    ///            | <>":""[" <seq> "]"<cmdarg>
+    ///            | <>":""<" <key> <attr> ">"<cmdarg>
+    ///            | <>":""<>"":"<cmdexpr>
+    /// ```
+    pub fn parse_command_expression(&mut self) -> Result<ParsedDirective, ParseError> {
         let from = self.position();
         if !matches!(self.t, Token::DirectiveOpening(..)) {
             return Err(ParseError::ExpectedOpeningAngularBracket(from));
@@ -376,62 +404,62 @@ impl <'a> TokenIter<'a> {
             _ => return Err(ParseError::ExpectedDirectiveKey(self.position())),
         };
         self.next(); self.skip_whitespace();
-        if matches!(self.t, Token::Colon(..)) {
-            self.next();
-            let attributes = self.parse_attributes()?;
-            if !matches!(self.t, Token::DirectiveClosing(..)) {
-                return Err(ParseError::ExpectedDirectiveClosing(self.position()))
-            }
-            self.next();
-            let content = self.parse_expression()?;
-            if !matches!(self.t, Token::ClosingDirectiveOpening(..)) {
-                return Err(ParseError::ExpectedClosingTag(self.position(), directive));
+        let attributes = self.parse_attributes()?;
+        if !matches!(self.t, Token::DirectiveClosing(..)) {
+            return Err(ParseError::ExpectedDirectiveClosing(self.position()))
+        }
+        self.next();
+        let mut arguments = vec![];
+        loop {
+            if !matches!(self.t, Token::Colon(..)) {
+                let to = self.position();
+                return Ok(ParsedDirective {
+                    directive,
+                    attributes,
+                    arguments,
+                    from,
+                    to,
+                });
             };
-            let closing_tag_at = self.position();
-            self.next(); self.skip_whitespace();
+            self.next();
             match self.t {
-                Token::DirectiveClosing(to) => {
-                    self.next();
-                    return Ok(ParsedDirective {
-                        directive,
-                        attributes,
-                        arguments: vec![content],
-                        from,
-                        to: to.clone(),
-                    });
-                }
-                Token::Word(at, w) | Token::Quote(at, w) => {
-                    if !directive.eq(w) {
-                        return Err(ParseError::MismatchedClosingTag(from, directive, closing_tag_at, w.clone()));
-                    };
-                    self.next(); self.skip_whitespace();
-                    if !matches!(self.t, Token::DirectiveClosing(..)) {
-                        return Err(ParseError::ExpectedDirectiveClosing(self.position()));
-                    };
-                    let to = self.position();
-                    self.next();
-                    return Ok(ParsedDirective {
-                        directive,
-                        attributes,
-                        arguments: vec![content],
-                        from,
+                Token::Word(from, w) | Token::Quote(from, w) => {
+                    let to = self.next_position();
+                    let text = ParsedText {
+                        text: String::from(w),
+                        from: from.clone(),
                         to,
-                    });
+                    };
+                    arguments.push(text.into());
+                    self.next();
                 }
-                Token::End(at) | Token::BracketOpening(at) | Token::BracketClosing(at) | Token::Semicolon(at) | Token::Colon(at) | Token::SequenceOpening(at) | Token::SequenceClosing(at) | Token::DirectiveOpening(at) | Token::ClosingDirectiveOpening(at) => {
-                    return Err(ParseError::ExpectedDirectiveClosing(at.clone()));
+                Token::BracketOpening(..) => {
+                    let argument = self.parse_bracket()?;
+                    arguments.push(argument.into());
                 }
-                Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
-            };
-        } else {
-            let attributes = self.parse_attributes()?;
-            if !matches!(self.t, Token::DirectiveClosing(..)) {
-                return Err(ParseError::ExpectedDirectiveClosing(self.position()))
-            }
-            self.next();
-            let mut arguments = vec![];
-            loop {
-                if !matches!(self.t, Token::Colon(..)) {
+                Token::SequenceOpening(..) => {
+                    self.next();
+                    let sequence = self.parse_sequence()?;
+                    arguments.push(sequence.into());
+                    if !matches!(self.t, Token::SequenceClosing(..)) {
+                        return Err(ParseError::ExpectedSequenceClosing(self.position()));
+                    };
+                    self.next();
+                }
+                Token::Diamond(..) => {
+                    self.next();
+                    if !matches!(self.t, Token::Colon(..)) {
+                        let position = self.position();
+                        return Err(ParseError::ExpectedColonAfterPrecedenceOperator(position));
+                    };
+                    self.next();
+                    // Gives a more specific error message.
+                    if !matches!(self.t, Token::DirectiveOpening(..)) {
+                        let position = self.position();
+                        return Err(ParseError::ExpectedDirectiveAfterPrecedenceOperator(position));
+                    };
+                    let right_hand_directive = self.parse_command_expression()?;
+                    arguments.push(right_hand_directive.into());
                     let to = self.position();
                     return Ok(ParsedDirective {
                         directive,
@@ -440,89 +468,178 @@ impl <'a> TokenIter<'a> {
                         from,
                         to,
                     });
-                };
-                self.next();
-                match self.t {
-                    Token::Word(from, w) | Token::Quote(from, w) => {
-                        let to = self.next_position();
-                        let text = ParsedText {
-                            text: String::from(w),
-                            from: from.clone(),
-                            to,
-                        };
-                        arguments.push(text.into());
-                        self.next();
-                    }
-                    Token::BracketOpening(..) => {
-                        let argument = self.parse_bracket()?;
-                        arguments.push(argument.into());
-                    }
-                    Token::SequenceOpening(..) => {
-                        self.next();
-                        let sequence = self.parse_sequence()?;
-                        arguments.push(sequence.into());
-                        if !matches!(self.t, Token::SequenceClosing(..)) {
-                            return Err(ParseError::ExpectedSequenceClosing(self.position()));
-                        };
-                        self.next();
-                    }
-                    Token::DirectiveOpening(..) => {
-                        let directive_from = self.next_position();
-                        self.skip_lookahead_whitespace();
-                        if matches!(self.t2, Token::DirectiveClosing(..)) {
-                            self.next(); self.next();
-                            if !matches!(self.t, Token::Colon(..)) {
-                                let position = self.position();
-                                return Err(ParseError::ExpectedColonAfterPrecedenceOperator(position));
-                            };
-                            self.next();
-                            // Gives a more specific error message.
-                            if !matches!(self.t, Token::DirectiveOpening(..)) {
-                                let position = self.position();
-                                return Err(ParseError::ExpectedDirectiveAfterPrecedenceOperator(position));
-                            };
-                            let application = self.parse_directive_expression()?;
-                            arguments.push(application.into());
-                            let to = self.position();
-                            return Ok(ParsedDirective {
-                                directive,
-                                attributes,
-                                arguments,
-                                from,
-                                to,
-                            });
-                        } else {
-                            self.next();
-                            let directive = match self.t {
-                                Token::Word(_, w) | Token::Quote(_, w) => w.clone(),
-                                Token::BracketOpening(_) | Token::BracketClosing(_) | Token::Semicolon(_) | Token::Colon(_) | Token::SequenceOpening(_) | Token::SequenceClosing(_) | Token::DirectiveOpening(_) | Token::ClosingDirectiveOpening(_) | Token::End(_) => {
-                                    return Err(ParseError::ExpectedDirectiveKey(self.position()));
-                                }
-                                Token::Whitespace(_) | Token::Comment(_) | Token::DirectiveClosing(_) => unreachable!(),
-                            };
-                            self.next();
-                            let attributes = self.parse_attributes()?;
-                            if !matches!(self.t, Token::DirectiveClosing(..)) {
-                                return Err(ParseError::ExpectedDirectiveClosing(self.position()));
-                            };
-                            let directive_to = self.position();
-                            self.next();
-                            arguments.push(ParsedDirective {
-                                directive,
-                                attributes,
-                                arguments: vec![],
-                                from: directive_from,
-                                to: directive_to,
-                            }.into());
-                        };
-                    }
-                    Token::Whitespace(position) | Token::Comment(position) | Token::Colon(position) | Token::Semicolon(position) | Token::BracketClosing(position) | Token::SequenceClosing(position) | Token::DirectiveClosing(position) | Token::End(position) | Token::ClosingDirectiveOpening(position) => {
-                        return Err(ParseError::ExpectedDirectiveArgument(position.clone()));
-                    }
-                };
+                }
+                Token::DirectiveOpening(..) => {
+                    let directive_from = self.position();
+                    self.next(); self.skip_whitespace();
+                    let directive = match self.t {
+                        Token::Word(_, w) | Token::Quote(_, w) => w.clone(),
+                        Token::BracketOpening(_) | Token::BracketClosing(_) | Token::Semicolon(_) | Token::OpeningTagOpening(_) | Token::Diamond(_) | Token::DirectiveClosing(_) | Token::Colon(_) | Token::SequenceOpening(_) | Token::SequenceClosing(_) | Token::DirectiveOpening(_) | Token::ClosingTagOpening(_) | Token::End(_) => {
+                            return Err(ParseError::ExpectedDirectiveKey(self.position()));
+                        }
+                        Token::Whitespace(_) | Token::Comment(_)  => unreachable!(),
+                    };
+                    self.next();
+                    let attributes = self.parse_attributes()?;
+                    if !matches!(self.t, Token::DirectiveClosing(..)) {
+                        return Err(ParseError::ExpectedDirectiveClosing(self.position()));
+                    };
+                    let directive_to = self.position();
+                    self.next();
+                    arguments.push(ParsedDirective {
+                        directive,
+                        attributes,
+                        arguments: vec![],
+                        from: directive_from,
+                        to: directive_to,
+                    }.into());
+                }
+                Token::Whitespace(position) | Token::Comment(position) | Token::Colon(position) | Token::Semicolon(position) | Token::BracketClosing(position) | Token::SequenceClosing(position) | Token::DirectiveClosing(position) | Token::End(position) | Token::ClosingTagOpening(position) => {
+                    return Err(ParseError::ExpectedDirectiveArgument(position.clone()));
+                }
+                Token::OpeningTagOpening(at) => {
+                    return Err(ParseError::IllegalTagDirectiveArgument(at.clone()))
+                }
             };
         };
     }
+
+
+    /// Parse a tag expression.
+    ///
+    /// ```text
+    /// <tagexpr> ::= "<+" <key> <attr> ">"<tagarg> <expr> "<-" <key> ">"
+    ///             | "<+" <key> <attr> ">"<tagarg> <expr> "<-" ">"
+    ///
+    ///
+    /// <tagarg> ::= < >
+    ///            | ":"<key><tagarg>
+    ///            | ":""{" <expr> "}"<tagarg>
+    ///            | ":""{" <dictp> "}"<tagarg>
+    ///            | ":""[" <seq> "]"<tagarg>
+    ///            | ":""<" <key> <attr> ">"<tagarg>
+    /// ```
+    pub fn parse_tag_expression(&mut self) -> Result<ParsedDirective, ParseError> {
+        let from = self.position();
+        if !matches!(self.t, Token::OpeningTagOpening(..)) {
+            return Err(ParseError::ExpectedOpeningAngularBracket(from));
+        }
+        self.next(); self.skip_whitespace();
+        let directive = match self.t {
+            Token::Word(p, k) | Token::Quote(p, k) => k.clone(),
+            _ => return Err(ParseError::ExpectedDirectiveKey(self.position())),
+        };
+        self.next();
+        let attributes = self.parse_attributes()?;
+        if !matches!(self.t, Token::DirectiveClosing(..)) {
+            return Err(ParseError::ExpectedDirectiveClosing(self.position()))
+        }
+        self.next();
+        let mut arguments = vec![];
+        loop {
+            if !matches!(self.t, Token::Colon(..)) {
+                break;
+            };
+            self.next();
+            match self.t {
+                Token::Word(from, w) | Token::Quote(from, w) => {
+                    let to = self.next_position();
+                    let text = ParsedText {
+                        text: String::from(w),
+                        from: from.clone(),
+                        to,
+                    };
+                    arguments.push(text.into());
+                    self.next();
+                }
+                Token::BracketOpening(..) => {
+                    let argument = self.parse_bracket()?;
+                    arguments.push(argument.into());
+                }
+                Token::SequenceOpening(..) => {
+                    self.next();
+                    let sequence = self.parse_sequence()?;
+                    arguments.push(sequence.into());
+                    if !matches!(self.t, Token::SequenceClosing(..)) {
+                        return Err(ParseError::ExpectedSequenceClosing(self.position()));
+                    };
+                    self.next();
+                }
+                Token::DirectiveOpening(directive_from) => {
+                    self.next(); self.skip_whitespace();
+                    let directive = match self.t {
+                        Token::Word(_, w) | Token::Quote(_, w) => w.clone(),
+                        Token::BracketOpening(_) | Token::BracketClosing(_) | Token::Semicolon(_) | Token::OpeningTagOpening(_) | Token::Diamond(_) | Token::DirectiveClosing(_) | Token::Colon(_) | Token::SequenceOpening(_) | Token::SequenceClosing(_) | Token::DirectiveOpening(_) | Token::ClosingTagOpening(_) | Token::End(_) => {
+                            return Err(ParseError::ExpectedDirectiveKey(self.position()));
+                        }
+                        Token::Whitespace(_) | Token::Comment(_)  => unreachable!(),
+                    };
+                    self.next();
+                    let attributes = self.parse_attributes()?;
+                    if !matches!(self.t, Token::DirectiveClosing(..)) {
+                        return Err(ParseError::ExpectedDirectiveClosing(self.position()));
+                    };
+                    let directive_to = self.position();
+                    self.next();
+                    arguments.push(ParsedDirective {
+                        directive,
+                        attributes,
+                        arguments: vec![],
+                        from: directive_from.clone(),
+                        to: directive_to,
+                    }.into());
+                }
+                Token::Whitespace(position) | Token::Comment(position) | Token::Diamond(position) | Token::Colon(position) | Token::Semicolon(position) | Token::BracketClosing(position) | Token::SequenceClosing(position) | Token::DirectiveClosing(position) | Token::End(position) | Token::ClosingTagOpening(position) => {
+                    return Err(ParseError::ExpectedDirectiveArgument(position.clone()));
+                }
+                Token::OpeningTagOpening(at) => {
+                    return Err(ParseError::IllegalTagDirectiveArgument(at.clone()));
+                }
+            };
+        };
+        let content = self.parse_expression()?;
+        arguments.push(content);
+        if !matches!(self.t, Token::ClosingTagOpening(..)) {
+            return Err(ParseError::ExpectedClosingTag(self.position(), directive));
+        };
+        let closing_tag_at = self.position();
+        self.next(); self.skip_whitespace();
+        match self.t {
+            Token::DirectiveClosing(to) => {
+                self.next();
+                return Ok(ParsedDirective {
+                    directive,
+                    attributes,
+                    arguments,
+                    from,
+                    to: to.clone(),
+                });
+            }
+            Token::Word(at, w) | Token::Quote(at, w) => {
+                if !directive.eq(w) {
+                    return Err(ParseError::MismatchedClosingTag(from, directive, closing_tag_at, w.clone()));
+                };
+                self.next(); self.skip_whitespace();
+                if !matches!(self.t, Token::DirectiveClosing(..)) {
+                    return Err(ParseError::ExpectedDirectiveClosing(self.position()));
+                };
+                let to = self.position();
+                self.next();
+                return Ok(ParsedDirective {
+                    directive,
+                    attributes,
+                    arguments,
+                    from,
+                    to,
+                });
+            }
+            Token::End(at) | Token::BracketOpening(at) | Token::BracketClosing(at) | Token::Diamond(at) | Token::OpeningTagOpening(at) | Token::Semicolon(at) | Token::Colon(at) | Token::SequenceOpening(at) | Token::SequenceClosing(at) | Token::DirectiveOpening(at) | Token::ClosingTagOpening(at) => {
+                return Err(ParseError::ExpectedDirectiveClosing(at.clone()));
+            }
+            Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
+        };
+    }
+
 
     /// Parse attributes.
     ///
@@ -533,7 +650,7 @@ impl <'a> TokenIter<'a> {
     ///          | <key> ":" "{" <expr> "}" <attr>
     ///          | <key> ":" "{" <dictp> "}" <attr>
     ///          | <key> ":" "[" <seq> "]" <attr>
-    ///          | <key> ":" <direxpr> <attr>
+    ///          | <key> ":" <cmdexpr> <attr>
     /// ```
     pub fn parse_attributes(&mut self) -> Result<Vec<ParsedAttribute>, ParseError> {
         let mut attributes = vec![];
@@ -549,7 +666,7 @@ impl <'a> TokenIter<'a> {
                         to: key_to,
                     }
                 }
-                Token::BracketOpening(..) | Token::BracketClosing(..) | Token::Semicolon(..) | Token::Colon(..) | Token::SequenceOpening(..) | Token::SequenceClosing(..) | Token::DirectiveOpening(..) | Token::ClosingDirectiveOpening(..) | Token::DirectiveClosing(..) | Token::End(..) => {
+                Token::BracketOpening(..) | Token::BracketClosing(..) | Token::Diamond(..) | Token::OpeningTagOpening(..) | Token::Semicolon(..) | Token::Colon(..) | Token::SequenceOpening(..) | Token::SequenceClosing(..) | Token::DirectiveOpening(..) | Token::ClosingTagOpening(..) | Token::DirectiveClosing(..) | Token::End(..) => {
                     return Ok(attributes);
                 }
                 Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
@@ -557,7 +674,7 @@ impl <'a> TokenIter<'a> {
             self.next(); self.skip_whitespace();
             match self.t {
                 Token::Colon(..) => { }
-                Token::BracketOpening(attribute_at) | Token::BracketClosing(attribute_at) | Token::Semicolon(attribute_at) | Token::SequenceOpening(attribute_at) | Token::SequenceClosing(attribute_at) | Token::DirectiveOpening(attribute_at) | Token::ClosingDirectiveOpening(attribute_at) | Token::DirectiveClosing(attribute_at) | Token::End(attribute_at) | Token::Word(attribute_at, ..) | Token::Quote(attribute_at, ..) => {
+                Token::BracketOpening(attribute_at) | Token::Diamond(attribute_at) | Token::OpeningTagOpening(attribute_at) | Token::BracketClosing(attribute_at) | Token::Semicolon(attribute_at) | Token::SequenceOpening(attribute_at) | Token::SequenceClosing(attribute_at) | Token::DirectiveOpening(attribute_at) | Token::ClosingTagOpening(attribute_at) | Token::DirectiveClosing(attribute_at) | Token::End(attribute_at) | Token::Word(attribute_at, ..) | Token::Quote(attribute_at, ..) => {
                     attributes.push(ParsedAttribute {
                         key,
                         value: ParsedExpression::Empty(attribute_at.clone(), attribute_at.clone()),
@@ -589,11 +706,14 @@ impl <'a> TokenIter<'a> {
                     sequence.into()
                 }
                 Token::DirectiveOpening(..) => {
-                    let application = self.parse_directive_expression()?;
-                    application.into()
+                    let directive = self.parse_command_expression()?;
+                    directive.into()
                 }
-                Token::BracketClosing(at) | Token::Semicolon(at) | Token::Colon(at) | Token::SequenceClosing(at) | Token::DirectiveClosing(at) | Token::End(at) | Token::ClosingDirectiveOpening(at) => {
+                Token::BracketClosing(at) | Token::Semicolon(at) | Token::Diamond(at) | Token::Colon(at) | Token::SequenceClosing(at) | Token::DirectiveClosing(at) | Token::End(at) | Token::ClosingTagOpening(at) => {
                     return Err(ParseError::ExpectedAttributeArgument(at.clone()));
+                }
+                Token::OpeningTagOpening(at) => {
+                    return Err(ParseError::IllegalTagAttribute(at.clone()));
                 }
                 Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
             };
@@ -613,7 +733,7 @@ impl <'a> TokenIter<'a> {
         let argument;
         self.next(); self.skip_whitespace();
         match self.t {
-            Token::SequenceOpening(..) | Token::BracketOpening(..) | Token::DirectiveOpening(..) | Token::ClosingDirectiveOpening(..) => {
+            Token::SequenceOpening(..) | Token::BracketOpening(..) | Token::DirectiveOpening(..) | Token::OpeningTagOpening(..) | Token::ClosingTagOpening(..) => {
                 let expression = self.parse_expression()?;
                 argument = expression.into();
             }
@@ -628,14 +748,14 @@ impl <'a> TokenIter<'a> {
                         let dictionary = self.parse_dictionary()?;
                         argument = dictionary.into();
                     }
-                    Token::Word(..) | Token::Quote(..) | Token::BracketOpening(..) | Token::SequenceOpening(..) | Token::BracketClosing(..) | Token::DirectiveOpening(..) | Token::ClosingDirectiveOpening(..) | Token::DirectiveClosing(..) | Token::End(..) | Token::SequenceClosing(..) => {
+                    Token::Word(..) | Token::Quote(..) | Token::Diamond(..) | Token::OpeningTagOpening(..) | Token::BracketOpening(..) | Token::SequenceOpening(..) | Token::BracketClosing(..) | Token::DirectiveOpening(..) | Token::ClosingTagOpening(..) | Token::DirectiveClosing(..) | Token::End(..) | Token::SequenceClosing(..) => {
                         let expression = self.parse_expression()?;
                         argument = expression.into();
                     }
                     Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
                 };
             }
-            Token::BracketClosing(at) | Token::SequenceClosing(at) | Token::Semicolon(at) | Token::DirectiveClosing(at) | Token::End(at) => {
+            Token::BracketClosing(at) | Token::SequenceClosing(at) | Token::Diamond(at) | Token::Semicolon(at) | Token::DirectiveClosing(at) | Token::End(at) => {
                 argument = ParsedExpression::Empty(at.clone(), at.clone());
             }
             Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
@@ -674,6 +794,17 @@ pub enum ParseError {
     UnclosedQuote(Position),
     ExpectedClosingTag(Position, String),
     MismatchedClosingTag(Position, String, Position, String),
+    IllegalTagDirectiveArgument(Position),
+    IllegalTagAttribute(Position),
+}
+
+
+impl Debug for ParseError {
+
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", error_to_string(self))
+    }
+
 }
 
 
@@ -707,7 +838,7 @@ pub fn error_to_string(error: &ParseError) -> String {
             format!("Expected command closing at {}:{}.", at.line, at.column)
         }
         ParseError::ExpectedDirectiveArgument(at) => {
-            format!("Expected command argument at at {}:{}.", at.line, at.column)
+            format!("Expected command argument at {}:{}.", at.line, at.column)
         }
         ParseError::ExpectedDirectiveKey(at) => {
             format!("Expected command key at {}:{}.", at.line, at.column)
@@ -732,6 +863,12 @@ pub fn error_to_string(error: &ParseError) -> String {
         }
         ParseError::MismatchedClosingTag(opening_tag_at, directive, closing_tag_at, mismatch) => {
             format!("Mismatched closing tag \"{}\" at {}:{} does not match opening tag \"{}\" at {}:{}.", mismatch, closing_tag_at.line, closing_tag_at.column, directive, opening_tag_at.line, opening_tag_at.column)
+        }
+        ParseError::IllegalTagDirectiveArgument(at) => {
+            format!("Illegal tag as directive argument at {}:{}.", at.line, at.column)
+        }
+        ParseError::IllegalTagAttribute(at) => {
+            format!("Tag is not allowed as attribute at {}:{}.", at.line, at.column)
         }
     }
 }

@@ -82,6 +82,26 @@ impl ParsedExpression {
         self.length() == 0
     }
 
+    pub fn is_argument(&self) -> bool {
+        self.length() == 1
+    }
+
+    pub fn into_compound(self) -> Result<ParsedCompound, ()> {
+        if let ParsedArgument::Compound(c) = self {
+            Ok(c)
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn is_compound(&self) -> bool {
+        if let ParsedArgument::Compound(..) = self {
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn iter(&self) -> ExpressionIter {
         match self {
             ParsedExpression::Empty(..) => ExpressionIter::Empty,
@@ -90,6 +110,15 @@ impl ParsedExpression {
             },
             ParsedExpression::Compound(c) => ExpressionIter::Compound { arguments: &c.arguments, index: 0 },
         }
+    }
+
+}
+
+
+impl ParsedDirective {
+
+    pub fn length(&self) -> usize {
+        self.arguments.len()
     }
 
 }
@@ -119,11 +148,27 @@ impl ParsedArgument {
         }.clone()
     }
 
+    pub fn into_text(self) -> Result<ParsedText, ()> {
+        if let ParsedArgument::Text(text) = self {
+            Ok(text)
+        } else {
+            Err(())
+        }
+    }
+
     pub fn is_text(&self) -> bool {
         if let ParsedArgument::Text(..) = self {
             true
         } else {
             false
+        }
+    }
+
+    pub fn into_sequence(self) -> Result<ParsedSequence, ()> {
+        if let ParsedArgument::Sequence(s) = self {
+            Ok(s)
+        } else {
+            Err(())
         }
     }
 
@@ -135,6 +180,14 @@ impl ParsedArgument {
         }
     }
 
+    pub fn into_dictionary(self) -> Result<ParsedDictionary, ()> {
+        if let ParsedArgument::Dictionary(d) = self {
+            Ok(d)
+        } else {
+            Err(())
+        }
+    }
+
     pub fn is_dictionary(&self) -> bool {
         if let ParsedArgument::Dictionary(..) = self {
             true
@@ -143,16 +196,16 @@ impl ParsedArgument {
         }
     }
 
-    pub fn is_command(&self) -> bool {
-        if let ParsedArgument::Command(..) = self {
-            true
+    pub fn into_directive(self) -> Result<ParsedDirective, ()> {
+        if let ParsedArgument::Command(d) = self {
+            Ok(d)
         } else {
-            false
+            Err(())
         }
     }
 
-    pub fn is_compound(&self) -> bool {
-        if let ParsedArgument::Compound(..) = self {
+    pub fn is_directive(&self) -> bool {
+        if let ParsedArgument::Command(..) = self {
             true
         } else {
             false

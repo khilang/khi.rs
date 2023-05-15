@@ -10,8 +10,7 @@
 // '\' must be inserted as "\textbackslash" in text and "\backslash" or "\setminus" in math. "\\" indicates a line break.
 
 
-use std::fmt::format;
-use crate::ast::{ParsedArgument, ParsedDirective, ParsedCompound, ParsedDictionary, ParsedExpression, ParsedSequence};
+use crate::ast::{ParsedArgument, ParsedDirective, ParsedExpression};
 use crate::lex::Position;
 use crate::tex::preprocess::PreprocessorError::{IllegalDictionary, IllegalSequence};
 

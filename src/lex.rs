@@ -16,12 +16,14 @@ pub enum Token {
     Semicolon(Position),
     Colon(Position),
     Comment(Position),
+    Diamond(Position),
     SequenceOpening(Position),
     SequenceClosing(Position),
     Word(Position, String),
     Quote(Position, String),
     DirectiveOpening(Position),
-    ClosingDirectiveOpening(Position),
+    ClosingTagOpening(Position),
+    OpeningTagOpening(Position),
     DirectiveClosing(Position),
     Whitespace(Position),
     End(Position),
@@ -184,9 +186,17 @@ impl <'a> CharIter<'a> {
                                     break;
                                 };
                             };
-                        } else if cn == '/' {
+                        } else if cn == '>' {
                             self.flush_word(&mut tokens);
-                            tokens.push(Token::ClosingDirectiveOpening(self.position()));
+                            tokens.push(Token::Diamond(self.position()));
+                            self.next(); self.next();
+                        } else if cn == '+' {
+                            self.flush_word(&mut tokens);
+                            tokens.push(Token::OpeningTagOpening(self.position()));
+                            self.next(); self.next();
+                        } else if cn == '-' {
+                            self.flush_word(&mut tokens);
+                            tokens.push(Token::ClosingTagOpening(self.position()));
                             self.next(); self.next();
                         } else {
                             self.flush_word(&mut tokens);
@@ -297,6 +307,7 @@ impl <'a> CharIter<'a> {
                     self.next();
                 };
             } else {
+                self.flush_word(&mut tokens);
                 tokens.push(Token::End(self.position()));
                 return Ok(tokens);
             };

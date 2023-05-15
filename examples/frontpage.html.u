@@ -5,20 +5,20 @@
 
 
 <@doctype>
-<html:> # <tag:> is an opening tag and </tag> or </> is a closing tag.
-  <head:>
-    <title:><@title></>
-    <script: src:script.js></>
-  </head>
-  <body:>
-    <h1: id:main-heading><@title></>
-    <p:>Hello world!</> # These two paragraph tags are equivalent.
+<+html> # <+tag> is an opening tag and <-tag> or <-> is a closing tag.
+  <+head>
+    <+title><@title><->
+    <+script src:script.js><->
+  <-head>
+  <+body>
+    <+h1 id:main-heading><@title><->
+    <+p>Hello world!<-> # These two paragraph notations are equivalent.
     <p>:{Hello world!}
     <img src:frontpage.jpg>
-    <div: class:dark-background><p:>
-      This is a paragraph <br>
+    <+div class:dark-background><+p>
+      This is a paragraph<br>
       with a line break.
-      <em: class:italic-text>This text is italic.</>
-    </></>
-  </body>
-</html>
+      <+em class:italic-text>This text is italic.<->
+    <-><->
+  <-body>
+<-html>
