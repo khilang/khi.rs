@@ -10,6 +10,7 @@
 <exprp> ::= <text> <expr>
           | "{" <expr> "}" <expr>
           | "{" <dictp> "}" <expr>
+          | "{:" <dict> ":}" <expr>
           | "[" <seq> "]" <expr>
           | <direxpr> <expr>
 
@@ -21,12 +22,10 @@
 <dictp> ::= <key> ":" <expr>
           | <key> ":" <expr> ";" <dict>
           | <key> ";" <dict>
-          | ":" <dict>
 
 
 <seq> ::= <exprp>
         | <expr> ";" <seq>
-        | ":" <seq>
         | <>
 
 
@@ -44,9 +43,11 @@
            | ":"<key><cmdarg>
            | ":""{" <expr> "}"<cmdarg>
            | ":""{" <dictp> "}"<cmdarg>
+           | ":""{:" <dict> ":}"<cmdarg>
            | ":""[" <seq> "]"<cmdarg>
            | ":""<" <key> <attr> ">"<cmdarg>
            | ":""<>"":"<cmdexpr>
+           | ":""<>"
 
 
 # Tag expression
@@ -59,8 +60,10 @@
            | ":"<key><tagarg>
            | ":""{" <expr> "}"<tagarg>
            | ":""{" <dictp> "}"<tagarg>
+           | ":""{:" <dict> ":}"<tagarg>
            | ":""[" <seq> "]"<tagarg>
            | ":""<" <key> <attr> ">"<tagarg>
+           | ":""<>"
 
 
 # Directive attribute
@@ -69,6 +72,7 @@
          | <key> ":" <key> <attr>
          | <key> ":" "{" <expr> "}" <attr>
          | <key> ":" "{" <dictp> "}" <attr>
+         | <key> ":" "{:" <dict> ":}" <attr>
          | <key> ":" "[" <seq> "]" <attr>
          | <key> ":" <cmdexpr> <attr>
 

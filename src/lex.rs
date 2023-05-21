@@ -25,6 +25,8 @@ pub enum Token {
     ClosingTagOpening(Position),
     OpeningTagOpening(Position),
     DirectiveClosing(Position),
+    DictionaryOpening(Position),
+    DictionaryClosing(Position),
     Whitespace(Position),
     End(Position),
 }
@@ -159,9 +161,21 @@ impl <'a> CharIter<'a> {
         loop {
             if let Some(c) = self.c {
                 if c == '{' {
-                    self.flush_word(&mut tokens);
-                    tokens.push(Token::BracketOpening(self.position()));
-                    self.next();
+                    if let Some(cn) = self.cn {
+                        if cn == ':' {
+                            self.flush_word(&mut tokens);
+                            tokens.push(Token::DictionaryOpening(self.position()));
+                            self.next(); self.next();
+                        } else {
+                            self.flush_word(&mut tokens);
+                            tokens.push(Token::BracketOpening(self.position()));
+                            self.next();
+                        };
+                    } else {
+                        self.flush_word(&mut tokens);
+                        tokens.push(Token::BracketOpening(self.position()));
+                        self.next();
+                    };
                 } else if c == '}' {
                     self.flush_word(&mut tokens);
                     tokens.push(Token::BracketClosing(self.position()));
@@ -239,6 +253,10 @@ impl <'a> CharIter<'a> {
                                 break;
                             };
                         };
+                    } else if let Some('}') = self.cn {
+                        self.flush_word(&mut tokens);
+                        tokens.push(Token::DictionaryClosing(self.position()));
+                        self.next(); self.next();
                     } else {
                         self.flush_word(&mut tokens);
                         tokens.push(Token::Colon(self.position()));

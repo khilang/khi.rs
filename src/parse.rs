@@ -115,6 +115,8 @@ impl <'a> TokenIter<'a> {
         match self.t {
             Token::BracketOpening(position) => position,
             Token::BracketClosing(position) => position,
+            Token::DictionaryOpening(position) => position,
+            Token::DictionaryClosing(position) => position,
             Token::Semicolon(position) => position,
             Token::Colon(position) => position,
             Token::Comment(position) => position,
@@ -136,6 +138,8 @@ impl <'a> TokenIter<'a> {
         match self.t2 {
             Token::BracketOpening(position) => position,
             Token::BracketClosing(position) => position,
+            Token::DictionaryOpening(position) => position,
+            Token::DictionaryClosing(position) => position,
             Token::Semicolon(position) => position,
             Token::Colon(position) => position,
             Token::Comment(position) => position,
@@ -167,6 +171,7 @@ impl <'a> TokenIter<'a> {
     /// <exprp> ::= <text> <expr>
     ///           | "{" <expr> "}" <expr>
     ///           | "{" <dictp> "}" <expr>
+    ///           | "{:" <dict> ":}" <expr>
     ///           | "[" <seq> "]" <expr>
     ///           | <direxpr> <expr>
     /// ```
@@ -193,7 +198,7 @@ impl <'a> TokenIter<'a> {
                                 to = self.next_position();
                                 whitespace = false;
                             }
-                            Token::BracketOpening(..) | Token::BracketClosing(..) | Token::Semicolon(..) | Token::Colon(..) | Token::Diamond(..) | Token::OpeningTagOpening(..) | Token::SequenceOpening(..) | Token::SequenceClosing(..) | Token::Quote(..) | Token::DirectiveOpening(..) | Token::ClosingTagOpening(..) | Token::DirectiveClosing(..) | Token::End(..) => {
+                            Token::BracketOpening(..) | Token::BracketClosing(..) | Token::DictionaryOpening(..) | Token::DictionaryClosing(..) | Token::Semicolon(..) | Token::Colon(..) | Token::Diamond(..) | Token::OpeningTagOpening(..) | Token::SequenceOpening(..) | Token::SequenceClosing(..) | Token::Quote(..) | Token::DirectiveOpening(..) | Token::ClosingTagOpening(..) | Token::DirectiveClosing(..) | Token::End(..) => {
                                 break;
                             }
                         };
@@ -212,6 +217,16 @@ impl <'a> TokenIter<'a> {
                     let whitespace = self.is_whitespace();
                     arguments.push((argument, whitespace));
                 }
+                Token::DictionaryOpening(..) => {
+                    self.next();
+                    let dictionary = self.parse_dictionary()?;
+                    if !matches!(self.t, Token::DictionaryClosing(..)) {
+                        return Err(ParseError::ExpectedDictionaryClosing(self.position()));
+                    };
+                    self.next();
+                    let whitespace = self.is_whitespace();
+                    arguments.push((dictionary.into(), whitespace));
+                }
                 Token::SequenceOpening(..) => {
                     self.next();
                     let sequence = self.parse_sequence()?;
@@ -227,7 +242,7 @@ impl <'a> TokenIter<'a> {
                     let whitespace = self.is_whitespace();
                     arguments.push((directive.into(), whitespace));
                 }
-                Token::BracketClosing(to) | Token::SequenceClosing(to) | Token::Diamond(to) | Token::DirectiveClosing(to) | Token::Semicolon(to) | Token::Colon(to) | Token::End(to) | Token::ClosingTagOpening(to) => {
+                Token::BracketClosing(to) | Token::SequenceClosing(to) | Token::DictionaryClosing(to) | Token::Diamond(to) | Token::DirectiveClosing(to) | Token::Semicolon(to) | Token::Colon(to) | Token::End(to) | Token::ClosingTagOpening(to) => {
                     return if arguments.len() == 0 {
                         Ok(ParsedExpression::Empty(from, to.clone()))
                     } else if arguments.len() == 1 {
@@ -247,7 +262,6 @@ impl <'a> TokenIter<'a> {
     /// ```text
     /// <seq> ::= <exprp>
     ///         | <expr> ";" <seq>
-    ///         | ":" <seq>
     ///         | <>
     /// ```
     pub fn parse_sequence(&mut self) -> Result<ParsedSequence, ParseError> {
@@ -257,7 +271,7 @@ impl <'a> TokenIter<'a> {
             let element_from = self.position();
             self.skip_whitespace();
             match self.t {
-                Token::BracketOpening(..) | Token::SequenceOpening(..) | Token::DirectiveOpening(..) | Token::OpeningTagOpening(..) | Token::Word(..) | Token::Quote(..) => {
+                Token::BracketOpening(..) | Token::DictionaryOpening(..) | Token::SequenceOpening(..) | Token::DirectiveOpening(..) | Token::OpeningTagOpening(..) | Token::Word(..) | Token::Quote(..) => {
                     let expression = self.parse_expression()?;
                     elements.push(expression);
                     self.skip_whitespace();
@@ -272,11 +286,8 @@ impl <'a> TokenIter<'a> {
                     elements.push(ParsedExpression::Empty(element_from, element_to.clone()));
                     self.next();
                 }
-                Token::BracketClosing(position) | Token::SequenceClosing(position) | Token::DirectiveClosing(position) | Token::Diamond(position) | Token::ClosingTagOpening(position) | Token::End(position) => {
+                Token::BracketClosing(position) | Token::DictionaryClosing(position) | Token::SequenceClosing(position) | Token::DirectiveClosing(position) | Token::Diamond(position) | Token::Colon(position) | Token::ClosingTagOpening(position) | Token::End(position) => {
                     return Ok(ParsedSequence { elements, from, to: position.clone() });
-                }
-                Token::Colon(..) => {
-                    self.next();
                 }
                 Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
             };
@@ -292,7 +303,6 @@ impl <'a> TokenIter<'a> {
     /// <dictp> ::= <key> ":" <expr>
     ///           | <key> ":" <expr> ";" <dict>
     ///           | <key> ";" <dict>
-    ///           | ":" <dict>
     /// ```
     pub fn parse_dictionary(&mut self) -> Result<ParsedDictionary, ParseError> {
         let from = self.position();
@@ -308,11 +318,7 @@ impl <'a> TokenIter<'a> {
                         to: key_to,
                     }
                 }
-                Token::Colon(..) => {
-                    self.next();
-                    continue;
-                },
-                Token::BracketOpening(to) | Token::DirectiveOpening(to) | Token::Diamond(to) | Token::OpeningTagOpening(to) | Token::ClosingTagOpening(to) | Token::DirectiveClosing(to) | Token::BracketClosing(to) | Token::End(to) | Token::Semicolon(to) | Token::SequenceOpening(to) | Token::SequenceClosing(to) => {
+                Token::BracketOpening(to) | Token::DirectiveOpening(to) | Token::DictionaryOpening(to) | Token::DictionaryClosing(to) | Token::Diamond(to) | Token::Colon(to) | Token::OpeningTagOpening(to) | Token::ClosingTagOpening(to) | Token::DirectiveClosing(to) | Token::BracketClosing(to) | Token::End(to) | Token::Semicolon(to) | Token::SequenceOpening(to) | Token::SequenceClosing(to) => {
                     return Ok(ParsedDictionary { entries, from, to: to.clone() });
                 }
                 Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
@@ -329,7 +335,7 @@ impl <'a> TokenIter<'a> {
                     self.next();
                     continue;
                 }
-                Token::BracketOpening(at) | Token::BracketClosing(at) | Token::SequenceOpening(at) | Token::Diamond(at) | Token::OpeningTagOpening(at) | Token::SequenceClosing(at) | Token::Word(at, ..) | Token::Quote(at, ..) | Token::DirectiveOpening(at) | Token::ClosingTagOpening(at) | Token::DirectiveClosing(at) | Token::End(at) => {
+                Token::BracketOpening(at) | Token::BracketClosing(at) | Token::DictionaryOpening(at) | Token::DictionaryClosing(at) | Token::SequenceOpening(at) | Token::Diamond(at) | Token::OpeningTagOpening(at) | Token::SequenceClosing(at) | Token::Word(at, ..) | Token::Quote(at, ..) | Token::DirectiveOpening(at) | Token::ClosingTagOpening(at) | Token::DirectiveClosing(at) | Token::End(at) => {
                     return Err(ParseError::ExpectedEntrySeparator(at.clone()));
                 }
                 Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
@@ -347,7 +353,7 @@ impl <'a> TokenIter<'a> {
                     self.next();
                     continue;
                 }
-                Token::Word(to, ..) | Token::Quote(to, ..) | Token::BracketOpening(to) | Token::Diamond(to) | Token::OpeningTagOpening(to) | Token::SequenceOpening(to) | Token::DirectiveOpening(to) | Token::ClosingTagOpening(to) | Token::End(to) | Token::BracketClosing(to) | Token::SequenceClosing(to) | Token::DirectiveClosing(to) | Token::Colon(to) => {
+                Token::Word(to, ..) | Token::Quote(to, ..) | Token::BracketOpening(to) | Token::DictionaryOpening(to) | Token::DictionaryClosing(to) | Token::Diamond(to) | Token::OpeningTagOpening(to) | Token::SequenceOpening(to) | Token::DirectiveOpening(to) | Token::ClosingTagOpening(to) | Token::End(to) | Token::BracketClosing(to) | Token::SequenceClosing(to) | Token::DirectiveClosing(to) | Token::Colon(to) => {
                     return Ok(ParsedDictionary { entries, from, to: to.clone() });
                 }
                 Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
@@ -361,13 +367,6 @@ impl <'a> TokenIter<'a> {
     /// ```text
     /// <direxpr> ::= <><cmdexpr>
     ///             | <><tagexpr>
-    ///
-    /// <attr> ::= <>
-    ///          | <key> <attr>
-    ///          | <key> ":" <key> <attr>
-    ///          | <key> ":" "{" <expr> "}" <attr>
-    ///          | <key> ":" "{" <dictp> "}" <attr>
-    ///          | <key> ":" "[" <seq> "]" <attr>
     /// ```
     pub fn parse_directive_expression(&mut self) -> Result<ParsedDirective, ParseError> {
         if matches!(self.t, Token::DirectiveOpening(..)) {
@@ -389,9 +388,11 @@ impl <'a> TokenIter<'a> {
     ///            | <>":"<key><cmdarg>
     ///            | <>":""{" <expr> "}"<cmdarg>
     ///            | <>":""{" <dictp> "}"<cmdarg>
+    ///            | <>":""{:" <dict> ":}"<cmdarg>
     ///            | <>":""[" <seq> "]"<cmdarg>
     ///            | <>":""<" <key> <attr> ">"<cmdarg>
     ///            | <>":""<>"":"<cmdexpr>
+    ///            | ":""<>"
     /// ```
     pub fn parse_command_expression(&mut self) -> Result<ParsedDirective, ParseError> {
         let from = self.position();
@@ -437,6 +438,15 @@ impl <'a> TokenIter<'a> {
                     let argument = self.parse_bracket()?;
                     arguments.push(argument.into());
                 }
+                Token::DictionaryOpening(..) => {
+                    self.next();
+                    let dictionary = self.parse_dictionary()?;
+                    if !matches!(self.t, Token::DictionaryClosing(..)) {
+                        return Err(ParseError::ExpectedDictionaryClosing(self.position()));
+                    };
+                    self.next();
+                    arguments.push(dictionary.into());
+                }
                 Token::SequenceOpening(..) => {
                     self.next();
                     let sequence = self.parse_sequence()?;
@@ -449,8 +459,8 @@ impl <'a> TokenIter<'a> {
                 Token::Diamond(..) => {
                     self.next();
                     if !matches!(self.t, Token::Colon(..)) {
-                        let position = self.position();
-                        return Err(ParseError::ExpectedColonAfterPrecedenceOperator(position));
+                        let to = self.position();
+                        return Ok(ParsedDirective { directive, attributes, arguments, from, to, });
                     };
                     self.next();
                     // Gives a more specific error message.
@@ -474,7 +484,7 @@ impl <'a> TokenIter<'a> {
                     self.next(); self.skip_whitespace();
                     let directive = match self.t {
                         Token::Word(_, w) | Token::Quote(_, w) => w.clone(),
-                        Token::BracketOpening(_) | Token::BracketClosing(_) | Token::Semicolon(_) | Token::OpeningTagOpening(_) | Token::Diamond(_) | Token::DirectiveClosing(_) | Token::Colon(_) | Token::SequenceOpening(_) | Token::SequenceClosing(_) | Token::DirectiveOpening(_) | Token::ClosingTagOpening(_) | Token::End(_) => {
+                        Token::BracketOpening(_) | Token::BracketClosing(_) | Token::DictionaryOpening(_) | Token::DictionaryClosing(_) | Token::Semicolon(_) | Token::OpeningTagOpening(_) | Token::Diamond(_) | Token::DirectiveClosing(_) | Token::Colon(_) | Token::SequenceOpening(_) | Token::SequenceClosing(_) | Token::DirectiveOpening(_) | Token::ClosingTagOpening(_) | Token::End(_) => {
                             return Err(ParseError::ExpectedDirectiveKey(self.position()));
                         }
                         Token::Whitespace(_) | Token::Comment(_)  => unreachable!(),
@@ -494,7 +504,7 @@ impl <'a> TokenIter<'a> {
                         to: directive_to,
                     }.into());
                 }
-                Token::Whitespace(position) | Token::Comment(position) | Token::Colon(position) | Token::Semicolon(position) | Token::BracketClosing(position) | Token::SequenceClosing(position) | Token::DirectiveClosing(position) | Token::End(position) | Token::ClosingTagOpening(position) => {
+                Token::Whitespace(position) | Token::Comment(position) | Token::Colon(position) | Token::Semicolon(position) | Token::DictionaryClosing(position) | Token::BracketClosing(position) | Token::SequenceClosing(position) | Token::DirectiveClosing(position) | Token::End(position) | Token::ClosingTagOpening(position) => {
                     return Err(ParseError::ExpectedDirectiveArgument(position.clone()));
                 }
                 Token::OpeningTagOpening(at) => {
@@ -516,8 +526,10 @@ impl <'a> TokenIter<'a> {
     ///            | ":"<key><tagarg>
     ///            | ":""{" <expr> "}"<tagarg>
     ///            | ":""{" <dictp> "}"<tagarg>
+    ///            | ":""{:" <dict> ":}"<tagarg>
     ///            | ":""[" <seq> "]"<tagarg>
     ///            | ":""<" <key> <attr> ">"<tagarg>
+    ///            | ":""<>"
     /// ```
     pub fn parse_tag_expression(&mut self) -> Result<ParsedDirective, ParseError> {
         let from = self.position();
@@ -556,6 +568,15 @@ impl <'a> TokenIter<'a> {
                     let argument = self.parse_bracket()?;
                     arguments.push(argument.into());
                 }
+                Token::DictionaryOpening(..) => {
+                    self.next();
+                    let dictionary = self.parse_dictionary()?;
+                    if !matches!(self.t, Token::DictionaryClosing(..)) {
+                        return Err(ParseError::ExpectedDictionaryClosing(self.position()));
+                    };
+                    self.next();
+                    arguments.push(dictionary.into());
+                }
                 Token::SequenceOpening(..) => {
                     self.next();
                     let sequence = self.parse_sequence()?;
@@ -569,7 +590,7 @@ impl <'a> TokenIter<'a> {
                     self.next(); self.skip_whitespace();
                     let directive = match self.t {
                         Token::Word(_, w) | Token::Quote(_, w) => w.clone(),
-                        Token::BracketOpening(_) | Token::BracketClosing(_) | Token::Semicolon(_) | Token::OpeningTagOpening(_) | Token::Diamond(_) | Token::DirectiveClosing(_) | Token::Colon(_) | Token::SequenceOpening(_) | Token::SequenceClosing(_) | Token::DirectiveOpening(_) | Token::ClosingTagOpening(_) | Token::End(_) => {
+                        Token::BracketOpening(_) | Token::BracketClosing(_) | Token::DictionaryOpening(..) | Token::DictionaryClosing(..) | Token::Semicolon(_) | Token::OpeningTagOpening(_) | Token::Diamond(_) | Token::DirectiveClosing(_) | Token::Colon(_) | Token::SequenceOpening(_) | Token::SequenceClosing(_) | Token::DirectiveOpening(_) | Token::ClosingTagOpening(_) | Token::End(_) => {
                             return Err(ParseError::ExpectedDirectiveKey(self.position()));
                         }
                         Token::Whitespace(_) | Token::Comment(_)  => unreachable!(),
@@ -589,7 +610,12 @@ impl <'a> TokenIter<'a> {
                         to: directive_to,
                     }.into());
                 }
-                Token::Whitespace(position) | Token::Comment(position) | Token::Diamond(position) | Token::Colon(position) | Token::Semicolon(position) | Token::BracketClosing(position) | Token::SequenceClosing(position) | Token::DirectiveClosing(position) | Token::End(position) | Token::ClosingTagOpening(position) => {
+                Token::Diamond(..) => {
+                    self.next();
+                    break;
+                    // TODO: More specific error if use colon?
+                }
+                Token::Whitespace(position) | Token::Comment(position) | Token::Colon(position) | Token::Semicolon(position) | Token::BracketClosing(position) | Token::DictionaryClosing(position) | Token::SequenceClosing(position) | Token::DirectiveClosing(position) | Token::End(position) | Token::ClosingTagOpening(position) => {
                     return Err(ParseError::ExpectedDirectiveArgument(position.clone()));
                 }
                 Token::OpeningTagOpening(at) => {
@@ -633,7 +659,7 @@ impl <'a> TokenIter<'a> {
                     to,
                 });
             }
-            Token::End(at) | Token::BracketOpening(at) | Token::BracketClosing(at) | Token::Diamond(at) | Token::OpeningTagOpening(at) | Token::Semicolon(at) | Token::Colon(at) | Token::SequenceOpening(at) | Token::SequenceClosing(at) | Token::DirectiveOpening(at) | Token::ClosingTagOpening(at) => {
+            Token::End(at) | Token::BracketOpening(at) | Token::BracketClosing(at) | Token::DictionaryOpening(at) | Token::DictionaryClosing(at) | Token::Diamond(at) | Token::OpeningTagOpening(at) | Token::Semicolon(at) | Token::Colon(at) | Token::SequenceOpening(at) | Token::SequenceClosing(at) | Token::DirectiveOpening(at) | Token::ClosingTagOpening(at) => {
                 return Err(ParseError::ExpectedDirectiveClosing(at.clone()));
             }
             Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
@@ -649,6 +675,7 @@ impl <'a> TokenIter<'a> {
     ///          | <key> ":" <key> <attr>
     ///          | <key> ":" "{" <expr> "}" <attr>
     ///          | <key> ":" "{" <dictp> "}" <attr>
+    ///          | <key> ":" "{:" <dict> ":}" <attr>
     ///          | <key> ":" "[" <seq> "]" <attr>
     ///          | <key> ":" <cmdexpr> <attr>
     /// ```
@@ -666,7 +693,7 @@ impl <'a> TokenIter<'a> {
                         to: key_to,
                     }
                 }
-                Token::BracketOpening(..) | Token::BracketClosing(..) | Token::Diamond(..) | Token::OpeningTagOpening(..) | Token::Semicolon(..) | Token::Colon(..) | Token::SequenceOpening(..) | Token::SequenceClosing(..) | Token::DirectiveOpening(..) | Token::ClosingTagOpening(..) | Token::DirectiveClosing(..) | Token::End(..) => {
+                Token::BracketOpening(..) | Token::BracketClosing(..) | Token::DictionaryOpening(..) | Token::DictionaryClosing(..) | Token::Diamond(..) | Token::OpeningTagOpening(..) | Token::Semicolon(..) | Token::Colon(..) | Token::SequenceOpening(..) | Token::SequenceClosing(..) | Token::DirectiveOpening(..) | Token::ClosingTagOpening(..) | Token::DirectiveClosing(..) | Token::End(..) => {
                     return Ok(attributes);
                 }
                 Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
@@ -674,7 +701,7 @@ impl <'a> TokenIter<'a> {
             self.next(); self.skip_whitespace();
             match self.t {
                 Token::Colon(..) => { }
-                Token::BracketOpening(attribute_at) | Token::Diamond(attribute_at) | Token::OpeningTagOpening(attribute_at) | Token::BracketClosing(attribute_at) | Token::Semicolon(attribute_at) | Token::SequenceOpening(attribute_at) | Token::SequenceClosing(attribute_at) | Token::DirectiveOpening(attribute_at) | Token::ClosingTagOpening(attribute_at) | Token::DirectiveClosing(attribute_at) | Token::End(attribute_at) | Token::Word(attribute_at, ..) | Token::Quote(attribute_at, ..) => {
+                Token::BracketOpening(attribute_at) | Token::DictionaryOpening(attribute_at) | Token::DictionaryClosing(attribute_at) | Token::Diamond(attribute_at) | Token::OpeningTagOpening(attribute_at) | Token::BracketClosing(attribute_at) | Token::Semicolon(attribute_at) | Token::SequenceOpening(attribute_at) | Token::SequenceClosing(attribute_at) | Token::DirectiveOpening(attribute_at) | Token::ClosingTagOpening(attribute_at) | Token::DirectiveClosing(attribute_at) | Token::End(attribute_at) | Token::Word(attribute_at, ..) | Token::Quote(attribute_at, ..) => {
                     attributes.push(ParsedAttribute {
                         key,
                         value: ParsedExpression::Empty(attribute_at.clone(), attribute_at.clone()),
@@ -695,6 +722,15 @@ impl <'a> TokenIter<'a> {
                     let argument = self.parse_bracket()?;
                     argument
                 }
+                Token::DictionaryOpening(..) => {
+                    self.next();
+                    let dictionary = self.parse_dictionary()?;
+                    if !matches!(self.t, Token::DictionaryClosing(..)) {
+                        return Err(ParseError::ExpectedDictionaryClosing(self.position()));
+                    };
+                    self.next();
+                    dictionary.into()
+                }
                 Token::SequenceOpening(..) => {
                     self.next();
                     let sequence = self.parse_sequence()?;
@@ -709,7 +745,9 @@ impl <'a> TokenIter<'a> {
                     let directive = self.parse_command_expression()?;
                     directive.into()
                 }
-                Token::BracketClosing(at) | Token::Semicolon(at) | Token::Diamond(at) | Token::Colon(at) | Token::SequenceClosing(at) | Token::DirectiveClosing(at) | Token::End(at) | Token::ClosingTagOpening(at) => {
+                Token::BracketClosing(at) | Token::DictionaryClosing(at) | Token::Semicolon(at)
+                | Token::Diamond(at) | Token::Colon(at) | Token::SequenceClosing(at)
+                | Token::DirectiveClosing(at) | Token::End(at) | Token::ClosingTagOpening(at) => {
                     return Err(ParseError::ExpectedAttributeArgument(at.clone()));
                 }
                 Token::OpeningTagOpening(at) => {
@@ -733,7 +771,7 @@ impl <'a> TokenIter<'a> {
         let argument;
         self.next(); self.skip_whitespace();
         match self.t {
-            Token::SequenceOpening(..) | Token::BracketOpening(..) | Token::DirectiveOpening(..) | Token::OpeningTagOpening(..) | Token::ClosingTagOpening(..) => {
+            Token::SequenceOpening(..) | Token::BracketOpening(..) | Token::DictionaryOpening(..) | Token::DirectiveOpening(..) | Token::OpeningTagOpening(..) | Token::ClosingTagOpening(..) => {
                 let expression = self.parse_expression()?;
                 argument = expression.into();
             }
@@ -748,14 +786,14 @@ impl <'a> TokenIter<'a> {
                         let dictionary = self.parse_dictionary()?;
                         argument = dictionary.into();
                     }
-                    Token::Word(..) | Token::Quote(..) | Token::Diamond(..) | Token::OpeningTagOpening(..) | Token::BracketOpening(..) | Token::SequenceOpening(..) | Token::BracketClosing(..) | Token::DirectiveOpening(..) | Token::ClosingTagOpening(..) | Token::DirectiveClosing(..) | Token::End(..) | Token::SequenceClosing(..) => {
+                    Token::Word(..) | Token::Quote(..) | Token::Diamond(..) | Token::OpeningTagOpening(..) | Token::BracketOpening(..) | Token::DictionaryOpening(..) | Token::DictionaryClosing(..) | Token::SequenceOpening(..) | Token::BracketClosing(..) | Token::DirectiveOpening(..) | Token::ClosingTagOpening(..) | Token::DirectiveClosing(..) | Token::End(..) | Token::SequenceClosing(..) => {
                         let expression = self.parse_expression()?;
                         argument = expression.into();
                     }
                     Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
                 };
             }
-            Token::BracketClosing(at) | Token::SequenceClosing(at) | Token::Diamond(at) | Token::Semicolon(at) | Token::DirectiveClosing(at) | Token::End(at) => {
+            Token::BracketClosing(at) | Token::DictionaryClosing(at) | Token::SequenceClosing(at) | Token::Diamond(at) | Token::Semicolon(at) | Token::DirectiveClosing(at) | Token::End(at) => {
                 argument = ParsedExpression::Empty(at.clone(), at.clone());
             }
             Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
@@ -796,6 +834,7 @@ pub enum ParseError {
     MismatchedClosingTag(Position, String, Position, String),
     IllegalTagDirectiveArgument(Position),
     IllegalTagAttribute(Position),
+    ExpectedDictionaryClosing(Position),
 }
 
 
@@ -869,6 +908,9 @@ pub fn error_to_string(error: &ParseError) -> String {
         }
         ParseError::IllegalTagAttribute(at) => {
             format!("Tag is not allowed as attribute at {}:{}.", at.line, at.column)
+        }
+        ParseError::ExpectedDictionaryClosing(at) => {
+            format!("Expected dictionary closing \":}}\" at {}:{}.", at.line, at.column)
         }
     }
 }

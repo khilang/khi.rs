@@ -1,7 +1,7 @@
 [package]
 name = "udl"
 description = "Parser for UDL (Universal Data Language)"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["Torm"]
 edition = "2021"
 homepage = "https://github.com/Torm/udl-rs"
