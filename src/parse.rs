@@ -1,817 +1,1260 @@
-//! Parsing of UDL documents.
+//! Parsing of Khi documents.
 //!
-//! The root element of a document can be an expression, a sequence or a dictionary. Use the
-//! corresponding function to parse a document: either [parse_expression_document],
+//! The root element of a document can be an expression, a sequence or a dictionary.
+//! Use the corresponding function to parse a document: either [parse_expression_document],
 //! [parse_sequence_document] or [parse_dictionary_document].
 
-
+use std::borrow::Borrow;
+use std::collections::{HashSet};
 use std::fmt::{Debug, Display, Formatter};
+use std::ops::Deref;
+use std::rc::Rc;
 use std::slice::Iter;
-use crate::ast::{ParsedCompound, ParsedDictionary, ParsedEntry, ParsedExpression, ParsedSequence, ParsedText, ParsedAttribute, ParsedDirective};
-use crate::lex::{CharIter, LexError, Position, Token};
+use ref_cast::RefCast;
+use crate::{Dictionary, Directive, Expression, Table, Text, Component, WhitespaceOption};
+use crate::lex::{lex, LexError, Position, Token};
 
+//// Parse
 
-/// Parse an expression document.
-pub fn parse_expression_document(document: &str) -> Result<ParsedExpression, ParseError> {
+/// Parse a document with an expression root node.
+pub fn parse_expression_document(document: &str) -> Result<ParsedExpression> {
     let tokens = tokenize(document)?;
     let mut iter = TokenIter::new(tokens.iter());
-    let expression = iter.parse_expression()?;
+    let mut strings = HashSet::new();
+    let structure = parse_nullable_expression(&mut iter, &mut strings)?;
     if !matches!(iter.t, Token::End(..)) {
         return Err(ParseError::ExpectedEnd(iter.position()));
     };
-    Ok(expression)
+    Ok(structure)
 }
 
-
-/// Parse a sequence document.
-pub fn parse_sequence_document(document: &str) -> Result<ParsedSequence, ParseError> {
+/// Parse a document with a table root node.
+pub fn parse_table_document(document: &str) -> Result<ParsedTable> {
     let tokens = tokenize(document)?;
     let mut iter = TokenIter::new(tokens.iter());
-    let sequence = iter.parse_sequence()?;
+    let mut strings = HashSet::new();
+    let sequence = parse_nullable_table(&mut iter, &mut strings)?;
     if !matches!(iter.t, Token::End(..)) {
         return Err(ParseError::ExpectedEnd(iter.position()));
     };
     Ok(sequence)
 }
 
-
-/// Parse a dictionary document.
-pub fn parse_dictionary_document(document: &str) -> Result<ParsedDictionary, ParseError> {
+/// Parse a document with a dictionary root node.
+pub fn parse_dictionary_document(document: &str) -> Result<ParsedDictionary> {
     let tokens = tokenize(document)?;
     let mut iter = TokenIter::new(tokens.iter());
-    let dictionary = iter.parse_dictionary()?;
+    let mut strings = HashSet::new();
+    let dictionary = parse_nullable_dictionary(&mut iter, &mut strings)?;
     if !matches!(iter.t, Token::End(..) ) {
         return Err(ParseError::ExpectedEnd(iter.position()));
     };
     Ok(dictionary)
 }
 
-
-fn tokenize(document: &str) -> Result<Vec<Token>, ParseError> {
+/// Convert a Khi document to tokens.
+fn tokenize(document: &str) -> Result<Vec<Token>> {
     let chars = document.chars();
-    let mut iter = CharIter::new(chars);
-    let tokens = match iter.lex() {
+    let tokens = match lex(chars) {
         Ok(ok) => ok,
         Err(err) => {
             return match err {
                 LexError::EscapeEOS => Err(ParseError::EscapingEndOfStream),
                 LexError::CommentedBracket(at) => Err(ParseError::CommentedBracket(at)),
                 LexError::UnclosedQuote(at) => Err(ParseError::UnclosedQuote(at)),
+                LexError::UnknownEscapeSequence(at) => Err(ParseError::UnknownEscapeSequence(at)),
+                LexError::InvalidHashSequence(at) => Err(ParseError::UnknownHashSequence(at)),
             };
         }
     };
     Ok(tokens)
 }
 
+pub type Result<T> = std::result::Result<T, ParseError>;
 
+//// Token iterator
+
+/// Token iterator.
 struct TokenIter<'a> {
     tokens: Iter<'a, Token>,
     t: &'a Token,
     t2: &'a Token,
 }
 
-
 impl <'a> TokenIter<'a> {
 
-    pub fn new(mut tokens: Iter<'a, Token>) -> Self {
+    fn new(mut tokens: Iter<'a, Token>) -> Self {
         let t = tokens.next().unwrap();
         let t2 = tokens.next().unwrap_or(t);
         TokenIter { tokens, t, t2 }
     }
 
-    pub fn next(&mut self) {
+    fn next(&mut self) {
         self.t = self.t2;
         self.t2 = self.tokens.next().unwrap_or(self.t);
     }
 
-    fn skip_whitespace(&mut self) {
+    fn skip_whitespace(&mut self) -> bool {
+        let mut skipped = false;
         loop {
-            if matches!(self.t, Token::Whitespace(..) | Token::Comment(..)) {
+            if matches!(self.t, Token::Whitespace(..)) {
+                skipped = true;
                 self.next();
             } else {
                 break;
             };
         };
+        skipped
+    }
+
+    fn position(&self) -> Position {
+        self.t.position()
+    }
+
+    fn peek_next_glyph_token(&mut self) -> &Token {
+        match self.t {
+            Token::Whitespace(..) => {
+                self.skip_lookahead_whitespace();
+                self.t2
+            }
+            t => t,
+        }
     }
 
     fn skip_lookahead_whitespace(&mut self) {
         loop {
-            if matches!(self.t2, Token::Whitespace(..) | Token::Comment(..)) {
+            if matches!(self.t2, Token::Whitespace(..)) {
                 self.t2 = self.tokens.next().unwrap_or(self.t2);
             } else {
                 break;
-            };
-        };
-    }
-
-    pub fn is_whitespace(&self) -> bool {
-        match self.t {
-            Token::Whitespace(..) | Token::Comment(..) => true,
-            _ => false,
-        }
-    }
-
-    pub fn position(&self) -> Position {
-        match self.t {
-            Token::BracketOpening(position) => position,
-            Token::BracketClosing(position) => position,
-            Token::DictionaryOpening(position) => position,
-            Token::DictionaryClosing(position) => position,
-            Token::Semicolon(position) => position,
-            Token::Colon(position) => position,
-            Token::Comment(position) => position,
-            Token::Diamond(position) => position,
-            Token::OpeningTagOpening(position) => position,
-            Token::SequenceOpening(position) => position,
-            Token::SequenceClosing(position) => position,
-            Token::Word(position, ..) => position,
-            Token::Quote(position, ..) => position,
-            Token::DirectiveOpening(position) => position,
-            Token::ClosingTagOpening(position) => position,
-            Token::DirectiveClosing(position) => position,
-            Token::Whitespace(position) => position,
-            Token::End(position) => position,
-        }.clone()
-    }
-
-    pub fn next_position(&self) -> Position {
-        match self.t2 {
-            Token::BracketOpening(position) => position,
-            Token::BracketClosing(position) => position,
-            Token::DictionaryOpening(position) => position,
-            Token::DictionaryClosing(position) => position,
-            Token::Semicolon(position) => position,
-            Token::Colon(position) => position,
-            Token::Comment(position) => position,
-            Token::Diamond(position) => position,
-            Token::OpeningTagOpening(position) => position,
-            Token::SequenceOpening(position) => position,
-            Token::SequenceClosing(position) => position,
-            Token::Word(position, ..) => position,
-            Token::Quote(position, ..) => position,
-            Token::DirectiveOpening(position) => position,
-            Token::ClosingTagOpening(position) => position,
-            Token::DirectiveClosing(position) => position,
-            Token::Whitespace(position) => position,
-            Token::End(position) => position,
-        }.clone()
-    }
-
-}
-
-
-impl <'a> TokenIter<'a> {
-
-    /// Parse an expression.
-    ///
-    /// ```text
-    /// <expr> ::= <exprp>
-    ///          | <>
-    ///
-    /// <exprp> ::= <text> <expr>
-    ///           | "{" <expr> "}" <expr>
-    ///           | "{" <dictp> "}" <expr>
-    ///           | "{:" <dict> ":}" <expr>
-    ///           | "[" <seq> "]" <expr>
-    ///           | <direxpr> <expr>
-    /// ```
-    pub fn parse_expression(&mut self) -> Result<ParsedExpression, ParseError> {
-        let mut arguments = vec![];
-        let from = self.position();
-        loop {
-            self.skip_whitespace();
-            match self.t {
-                Token::Word(_, w) => {
-                    let mut text = String::new();
-                    let mut whitespace = false;
-                    text.push_str(w);
-                    let mut to = self.next_position();
-                    loop {
-                        self.next();
-                        match self.t {
-                            Token::Comment(..) | Token::Whitespace(..) => {
-                                whitespace = true;
-                            }
-                            Token::Word(_, w) => {
-                                text.push(' ');
-                                text.push_str(w);
-                                to = self.next_position();
-                                whitespace = false;
-                            }
-                            Token::BracketOpening(..) | Token::BracketClosing(..) | Token::DictionaryOpening(..) | Token::DictionaryClosing(..) | Token::Semicolon(..) | Token::Colon(..) | Token::Diamond(..) | Token::OpeningTagOpening(..) | Token::SequenceOpening(..) | Token::SequenceClosing(..) | Token::Quote(..) | Token::DirectiveOpening(..) | Token::ClosingTagOpening(..) | Token::DirectiveClosing(..) | Token::End(..) => {
-                                break;
-                            }
-                        };
-                    };
-                    arguments.push((ParsedText { text, from, to }.into(), whitespace));
-                }
-                Token::Quote(quote_from, q) => {
-                    self.next();
-                    let quote_to = self.position();
-                    let whitespace = self.is_whitespace();
-                    arguments.push((ParsedText { text: String::from(q), from: quote_from.clone(), to: quote_to }.into(), whitespace));
-
-                }
-                Token::BracketOpening(..) => {
-                    let argument = self.parse_bracket()?;
-                    let whitespace = self.is_whitespace();
-                    arguments.push((argument, whitespace));
-                }
-                Token::DictionaryOpening(..) => {
-                    self.next();
-                    let dictionary = self.parse_dictionary()?;
-                    if !matches!(self.t, Token::DictionaryClosing(..)) {
-                        return Err(ParseError::ExpectedDictionaryClosing(self.position()));
-                    };
-                    self.next();
-                    let whitespace = self.is_whitespace();
-                    arguments.push((dictionary.into(), whitespace));
-                }
-                Token::SequenceOpening(..) => {
-                    self.next();
-                    let sequence = self.parse_sequence()?;
-                    if !matches!(self.t, Token::SequenceClosing(..)) {
-                        return Err(ParseError::ExpectedSequenceClosing(self.position()));
-                    };
-                    self.next();
-                    let whitespace = self.is_whitespace();
-                    arguments.push((sequence.into(), whitespace));
-                }
-                Token::DirectiveOpening(..) | Token::OpeningTagOpening(..) => {
-                    let directive = self.parse_directive_expression()?;
-                    let whitespace = self.is_whitespace();
-                    arguments.push((directive.into(), whitespace));
-                }
-                Token::BracketClosing(to) | Token::SequenceClosing(to) | Token::DictionaryClosing(to) | Token::Diamond(to) | Token::DirectiveClosing(to) | Token::Semicolon(to) | Token::Colon(to) | Token::End(to) | Token::ClosingTagOpening(to) => {
-                    return if arguments.len() == 0 {
-                        Ok(ParsedExpression::Empty(from, to.clone()))
-                    } else if arguments.len() == 1 {
-                        let (argument, ..) = arguments.pop().unwrap();
-                        Ok(argument.into())
-                    } else {
-                        Ok(ParsedCompound { arguments, from, to: to.clone() }.into())
-                    };
-                }
-                Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
-            };
-        }
-    }
-
-    /// Parse a sequence.
-    ///
-    /// ```text
-    /// <seq> ::= <exprp>
-    ///         | <expr> ";" <seq>
-    ///         | <>
-    /// ```
-    pub fn parse_sequence(&mut self) -> Result<ParsedSequence, ParseError> {
-        let mut elements = vec![];
-        let from = self.position();
-        loop {
-            let element_from = self.position();
-            self.skip_whitespace();
-            match self.t {
-                Token::BracketOpening(..) | Token::DictionaryOpening(..) | Token::SequenceOpening(..) | Token::DirectiveOpening(..) | Token::OpeningTagOpening(..) | Token::Word(..) | Token::Quote(..) => {
-                    let expression = self.parse_expression()?;
-                    elements.push(expression);
-                    self.skip_whitespace();
-                    if let Token::Semicolon(..) = self.t {
-                        self.next();
-                    } else {
-                        let to = self.position();
-                        return Ok(ParsedSequence { elements, from, to });
-                    };
-                }
-                Token::Semicolon(element_to) => {
-                    elements.push(ParsedExpression::Empty(element_from, element_to.clone()));
-                    self.next();
-                }
-                Token::BracketClosing(position) | Token::DictionaryClosing(position) | Token::SequenceClosing(position) | Token::DirectiveClosing(position) | Token::Diamond(position) | Token::Colon(position) | Token::ClosingTagOpening(position) | Token::End(position) => {
-                    return Ok(ParsedSequence { elements, from, to: position.clone() });
-                }
-                Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
-            };
-        }
-    }
-
-    /// Parse a dictionary.
-    ///
-    /// ```text
-    /// <dict> ::= <dictp>
-    ///          | <>
-    ///
-    /// <dictp> ::= <key> ":" <expr>
-    ///           | <key> ":" <expr> ";" <dict>
-    ///           | <key> ";" <dict>
-    /// ```
-    pub fn parse_dictionary(&mut self) -> Result<ParsedDictionary, ParseError> {
-        let from = self.position();
-        let mut entries = vec![];
-        loop {
-            self.skip_whitespace();
-            let key = match self.t {
-                Token::Word(key_from, w) | Token::Quote(key_from, w) => {
-                    let key_to = self.next_position();
-                    ParsedText {
-                        text: String::from(w),
-                        from: key_from.clone(),
-                        to: key_to,
-                    }
-                }
-                Token::BracketOpening(to) | Token::DirectiveOpening(to) | Token::DictionaryOpening(to) | Token::DictionaryClosing(to) | Token::Diamond(to) | Token::Colon(to) | Token::OpeningTagOpening(to) | Token::ClosingTagOpening(to) | Token::DirectiveClosing(to) | Token::BracketClosing(to) | Token::End(to) | Token::Semicolon(to) | Token::SequenceOpening(to) | Token::SequenceClosing(to) => {
-                    return Ok(ParsedDictionary { entries, from, to: to.clone() });
-                }
-                Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
-            };
-            self.next(); self.skip_whitespace();
-            // Look for assignment colon, entry separator or end.
-            match self.t {
-                Token::Colon(..) => { }
-                Token::Semicolon(entry_at) => {
-                    entries.push(ParsedEntry {
-                        key,
-                        value: ParsedExpression::Empty(entry_at.clone(), entry_at.clone()),
-                    });
-                    self.next();
-                    continue;
-                }
-                Token::BracketOpening(at) | Token::BracketClosing(at) | Token::DictionaryOpening(at) | Token::DictionaryClosing(at) | Token::SequenceOpening(at) | Token::Diamond(at) | Token::OpeningTagOpening(at) | Token::SequenceClosing(at) | Token::Word(at, ..) | Token::Quote(at, ..) | Token::DirectiveOpening(at) | Token::ClosingTagOpening(at) | Token::DirectiveClosing(at) | Token::End(at) => {
-                    return Err(ParseError::ExpectedEntrySeparator(at.clone()));
-                }
-                Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
-            };
-            self.next();
-            // After colon. Take expression value.
-            let expression = self.parse_expression()?;
-            entries.push(ParsedEntry {
-                key,
-                value: expression.into(),
-            });
-            // Look for entry separator or end.
-            match self.t {
-                Token::Semicolon(..) => {
-                    self.next();
-                    continue;
-                }
-                Token::Word(to, ..) | Token::Quote(to, ..) | Token::BracketOpening(to) | Token::DictionaryOpening(to) | Token::DictionaryClosing(to) | Token::Diamond(to) | Token::OpeningTagOpening(to) | Token::SequenceOpening(to) | Token::DirectiveOpening(to) | Token::ClosingTagOpening(to) | Token::End(to) | Token::BracketClosing(to) | Token::SequenceClosing(to) | Token::DirectiveClosing(to) | Token::Colon(to) => {
-                    return Ok(ParsedDictionary { entries, from, to: to.clone() });
-                }
-                Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
-            };
-        };
-    }
-
-
-    /// Parse a directive expression.
-    ///
-    /// ```text
-    /// <direxpr> ::= <><cmdexpr>
-    ///             | <><tagexpr>
-    /// ```
-    pub fn parse_directive_expression(&mut self) -> Result<ParsedDirective, ParseError> {
-        if matches!(self.t, Token::DirectiveOpening(..)) {
-            self.parse_command_expression()
-        } else if matches!(self.t, Token::OpeningTagOpening(..)) {
-            self.parse_tag_expression()
-        } else {
-            Err(ParseError::ExpectedOpeningAngularBracket(self.position()))
-        }
-    }
-
-
-    /// Parse a command expression.
-    ///
-    /// ```text
-    /// <cmdexpr> ::= <>"<" <key> <attr> ">"<cmdarg>
-    ///
-    /// <cmdarg> ::= < >
-    ///            | <>":"<key><cmdarg>
-    ///            | <>":""{" <expr> "}"<cmdarg>
-    ///            | <>":""{" <dictp> "}"<cmdarg>
-    ///            | <>":""{:" <dict> ":}"<cmdarg>
-    ///            | <>":""[" <seq> "]"<cmdarg>
-    ///            | <>":""<" <key> <attr> ">"<cmdarg>
-    ///            | <>":""<>"":"<cmdexpr>
-    ///            | ":""<>"
-    /// ```
-    pub fn parse_command_expression(&mut self) -> Result<ParsedDirective, ParseError> {
-        let from = self.position();
-        if !matches!(self.t, Token::DirectiveOpening(..)) {
-            return Err(ParseError::ExpectedOpeningAngularBracket(from));
-        }
-        self.next(); self.skip_whitespace();
-        let directive = match self.t {
-            Token::Word(p, k) | Token::Quote(p, k) => k.clone(),
-            _ => return Err(ParseError::ExpectedDirectiveKey(self.position())),
-        };
-        self.next(); self.skip_whitespace();
-        let attributes = self.parse_attributes()?;
-        if !matches!(self.t, Token::DirectiveClosing(..)) {
-            return Err(ParseError::ExpectedDirectiveClosing(self.position()))
-        }
-        self.next();
-        let mut arguments = vec![];
-        loop {
-            if !matches!(self.t, Token::Colon(..)) {
-                let to = self.position();
-                return Ok(ParsedDirective {
-                    directive,
-                    attributes,
-                    arguments,
-                    from,
-                    to,
-                });
-            };
-            self.next();
-            match self.t {
-                Token::Word(from, w) | Token::Quote(from, w) => {
-                    let to = self.next_position();
-                    let text = ParsedText {
-                        text: String::from(w),
-                        from: from.clone(),
-                        to,
-                    };
-                    arguments.push(text.into());
-                    self.next();
-                }
-                Token::BracketOpening(..) => {
-                    let argument = self.parse_bracket()?;
-                    arguments.push(argument.into());
-                }
-                Token::DictionaryOpening(..) => {
-                    self.next();
-                    let dictionary = self.parse_dictionary()?;
-                    if !matches!(self.t, Token::DictionaryClosing(..)) {
-                        return Err(ParseError::ExpectedDictionaryClosing(self.position()));
-                    };
-                    self.next();
-                    arguments.push(dictionary.into());
-                }
-                Token::SequenceOpening(..) => {
-                    self.next();
-                    let sequence = self.parse_sequence()?;
-                    arguments.push(sequence.into());
-                    if !matches!(self.t, Token::SequenceClosing(..)) {
-                        return Err(ParseError::ExpectedSequenceClosing(self.position()));
-                    };
-                    self.next();
-                }
-                Token::Diamond(..) => {
-                    self.next();
-                    if !matches!(self.t, Token::Colon(..)) {
-                        let to = self.position();
-                        return Ok(ParsedDirective { directive, attributes, arguments, from, to, });
-                    };
-                    self.next();
-                    // Gives a more specific error message.
-                    if !matches!(self.t, Token::DirectiveOpening(..)) {
-                        let position = self.position();
-                        return Err(ParseError::ExpectedDirectiveAfterPrecedenceOperator(position));
-                    };
-                    let right_hand_directive = self.parse_command_expression()?;
-                    arguments.push(right_hand_directive.into());
-                    let to = self.position();
-                    return Ok(ParsedDirective {
-                        directive,
-                        attributes,
-                        arguments,
-                        from,
-                        to,
-                    });
-                }
-                Token::DirectiveOpening(..) => {
-                    let directive_from = self.position();
-                    self.next(); self.skip_whitespace();
-                    let directive = match self.t {
-                        Token::Word(_, w) | Token::Quote(_, w) => w.clone(),
-                        Token::BracketOpening(_) | Token::BracketClosing(_) | Token::DictionaryOpening(_) | Token::DictionaryClosing(_) | Token::Semicolon(_) | Token::OpeningTagOpening(_) | Token::Diamond(_) | Token::DirectiveClosing(_) | Token::Colon(_) | Token::SequenceOpening(_) | Token::SequenceClosing(_) | Token::DirectiveOpening(_) | Token::ClosingTagOpening(_) | Token::End(_) => {
-                            return Err(ParseError::ExpectedDirectiveKey(self.position()));
-                        }
-                        Token::Whitespace(_) | Token::Comment(_)  => unreachable!(),
-                    };
-                    self.next();
-                    let attributes = self.parse_attributes()?;
-                    if !matches!(self.t, Token::DirectiveClosing(..)) {
-                        return Err(ParseError::ExpectedDirectiveClosing(self.position()));
-                    };
-                    let directive_to = self.position();
-                    self.next();
-                    arguments.push(ParsedDirective {
-                        directive,
-                        attributes,
-                        arguments: vec![],
-                        from: directive_from,
-                        to: directive_to,
-                    }.into());
-                }
-                Token::Whitespace(position) | Token::Comment(position) | Token::Colon(position) | Token::Semicolon(position) | Token::DictionaryClosing(position) | Token::BracketClosing(position) | Token::SequenceClosing(position) | Token::DirectiveClosing(position) | Token::End(position) | Token::ClosingTagOpening(position) => {
-                    return Err(ParseError::ExpectedDirectiveArgument(position.clone()));
-                }
-                Token::OpeningTagOpening(at) => {
-                    return Err(ParseError::IllegalTagDirectiveArgument(at.clone()))
-                }
-            };
-        };
-    }
-
-
-    /// Parse a tag expression.
-    ///
-    /// ```text
-    /// <tagexpr> ::= "<+" <key> <attr> ">"<tagarg> <expr> "<-" <key> ">"
-    ///             | "<+" <key> <attr> ">"<tagarg> <expr> "<-" ">"
-    ///
-    ///
-    /// <tagarg> ::= < >
-    ///            | ":"<key><tagarg>
-    ///            | ":""{" <expr> "}"<tagarg>
-    ///            | ":""{" <dictp> "}"<tagarg>
-    ///            | ":""{:" <dict> ":}"<tagarg>
-    ///            | ":""[" <seq> "]"<tagarg>
-    ///            | ":""<" <key> <attr> ">"<tagarg>
-    ///            | ":""<>"
-    /// ```
-    pub fn parse_tag_expression(&mut self) -> Result<ParsedDirective, ParseError> {
-        let from = self.position();
-        if !matches!(self.t, Token::OpeningTagOpening(..)) {
-            return Err(ParseError::ExpectedOpeningAngularBracket(from));
-        }
-        self.next(); self.skip_whitespace();
-        let directive = match self.t {
-            Token::Word(p, k) | Token::Quote(p, k) => k.clone(),
-            _ => return Err(ParseError::ExpectedDirectiveKey(self.position())),
-        };
-        self.next();
-        let attributes = self.parse_attributes()?;
-        if !matches!(self.t, Token::DirectiveClosing(..)) {
-            return Err(ParseError::ExpectedDirectiveClosing(self.position()))
-        }
-        self.next();
-        let mut arguments = vec![];
-        loop {
-            if !matches!(self.t, Token::Colon(..)) {
-                break;
-            };
-            self.next();
-            match self.t {
-                Token::Word(from, w) | Token::Quote(from, w) => {
-                    let to = self.next_position();
-                    let text = ParsedText {
-                        text: String::from(w),
-                        from: from.clone(),
-                        to,
-                    };
-                    arguments.push(text.into());
-                    self.next();
-                }
-                Token::BracketOpening(..) => {
-                    let argument = self.parse_bracket()?;
-                    arguments.push(argument.into());
-                }
-                Token::DictionaryOpening(..) => {
-                    self.next();
-                    let dictionary = self.parse_dictionary()?;
-                    if !matches!(self.t, Token::DictionaryClosing(..)) {
-                        return Err(ParseError::ExpectedDictionaryClosing(self.position()));
-                    };
-                    self.next();
-                    arguments.push(dictionary.into());
-                }
-                Token::SequenceOpening(..) => {
-                    self.next();
-                    let sequence = self.parse_sequence()?;
-                    arguments.push(sequence.into());
-                    if !matches!(self.t, Token::SequenceClosing(..)) {
-                        return Err(ParseError::ExpectedSequenceClosing(self.position()));
-                    };
-                    self.next();
-                }
-                Token::DirectiveOpening(directive_from) => {
-                    self.next(); self.skip_whitespace();
-                    let directive = match self.t {
-                        Token::Word(_, w) | Token::Quote(_, w) => w.clone(),
-                        Token::BracketOpening(_) | Token::BracketClosing(_) | Token::DictionaryOpening(..) | Token::DictionaryClosing(..) | Token::Semicolon(_) | Token::OpeningTagOpening(_) | Token::Diamond(_) | Token::DirectiveClosing(_) | Token::Colon(_) | Token::SequenceOpening(_) | Token::SequenceClosing(_) | Token::DirectiveOpening(_) | Token::ClosingTagOpening(_) | Token::End(_) => {
-                            return Err(ParseError::ExpectedDirectiveKey(self.position()));
-                        }
-                        Token::Whitespace(_) | Token::Comment(_)  => unreachable!(),
-                    };
-                    self.next();
-                    let attributes = self.parse_attributes()?;
-                    if !matches!(self.t, Token::DirectiveClosing(..)) {
-                        return Err(ParseError::ExpectedDirectiveClosing(self.position()));
-                    };
-                    let directive_to = self.position();
-                    self.next();
-                    arguments.push(ParsedDirective {
-                        directive,
-                        attributes,
-                        arguments: vec![],
-                        from: directive_from.clone(),
-                        to: directive_to,
-                    }.into());
-                }
-                Token::Diamond(..) => {
-                    self.next();
-                    break;
-                    // TODO: More specific error if use colon?
-                }
-                Token::Whitespace(position) | Token::Comment(position) | Token::Colon(position) | Token::Semicolon(position) | Token::BracketClosing(position) | Token::DictionaryClosing(position) | Token::SequenceClosing(position) | Token::DirectiveClosing(position) | Token::End(position) | Token::ClosingTagOpening(position) => {
-                    return Err(ParseError::ExpectedDirectiveArgument(position.clone()));
-                }
-                Token::OpeningTagOpening(at) => {
-                    return Err(ParseError::IllegalTagDirectiveArgument(at.clone()));
-                }
-            };
-        };
-        let content = self.parse_expression()?;
-        arguments.push(content);
-        if !matches!(self.t, Token::ClosingTagOpening(..)) {
-            return Err(ParseError::ExpectedClosingTag(self.position(), directive));
-        };
-        let closing_tag_at = self.position();
-        self.next(); self.skip_whitespace();
-        match self.t {
-            Token::DirectiveClosing(to) => {
-                self.next();
-                return Ok(ParsedDirective {
-                    directive,
-                    attributes,
-                    arguments,
-                    from,
-                    to: to.clone(),
-                });
             }
-            Token::Word(at, w) | Token::Quote(at, w) => {
-                if !directive.eq(w) {
-                    return Err(ParseError::MismatchedClosingTag(from, directive, closing_tag_at, w.clone()));
-                };
-                self.next(); self.skip_whitespace();
-                if !matches!(self.t, Token::DirectiveClosing(..)) {
-                    return Err(ParseError::ExpectedDirectiveClosing(self.position()));
-                };
-                let to = self.position();
-                self.next();
-                return Ok(ParsedDirective {
-                    directive,
-                    attributes,
-                    arguments,
-                    from,
-                    to,
-                });
-            }
-            Token::End(at) | Token::BracketOpening(at) | Token::BracketClosing(at) | Token::DictionaryOpening(at) | Token::DictionaryClosing(at) | Token::Diamond(at) | Token::OpeningTagOpening(at) | Token::Semicolon(at) | Token::Colon(at) | Token::SequenceOpening(at) | Token::SequenceClosing(at) | Token::DirectiveOpening(at) | Token::ClosingTagOpening(at) => {
-                return Err(ParseError::ExpectedDirectiveClosing(at.clone()));
-            }
-            Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
-        };
+        }
     }
 
-
-    /// Parse attributes.
-    ///
-    /// ```text
-    /// <attr> ::= <>
-    ///          | <key> <attr>
-    ///          | <key> ":" <key> <attr>
-    ///          | <key> ":" "{" <expr> "}" <attr>
-    ///          | <key> ":" "{" <dictp> "}" <attr>
-    ///          | <key> ":" "{:" <dict> ":}" <attr>
-    ///          | <key> ":" "[" <seq> "]" <attr>
-    ///          | <key> ":" <cmdexpr> <attr>
-    /// ```
-    pub fn parse_attributes(&mut self) -> Result<Vec<ParsedAttribute>, ParseError> {
-        let mut attributes = vec![];
+    fn consume_next_glyph_token(&mut self) {
         self.skip_whitespace();
-        loop {
-            let key = match self.t {
-                Token::Word(_, key) | Token::Quote(_, key) => {
-                    let key_from = self.position();
-                    let key_to = self.next_position();
-                    ParsedText {
-                        text: String::from(key),
-                        from: key_from,
-                        to: key_to,
-                    }
-                }
-                Token::BracketOpening(..) | Token::BracketClosing(..) | Token::DictionaryOpening(..) | Token::DictionaryClosing(..) | Token::Diamond(..) | Token::OpeningTagOpening(..) | Token::Semicolon(..) | Token::Colon(..) | Token::SequenceOpening(..) | Token::SequenceClosing(..) | Token::DirectiveOpening(..) | Token::ClosingTagOpening(..) | Token::DirectiveClosing(..) | Token::End(..) => {
-                    return Ok(attributes);
-                }
-                Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
-            };
-            self.next(); self.skip_whitespace();
-            match self.t {
-                Token::Colon(..) => { }
-                Token::BracketOpening(attribute_at) | Token::DictionaryOpening(attribute_at) | Token::DictionaryClosing(attribute_at) | Token::Diamond(attribute_at) | Token::OpeningTagOpening(attribute_at) | Token::BracketClosing(attribute_at) | Token::Semicolon(attribute_at) | Token::SequenceOpening(attribute_at) | Token::SequenceClosing(attribute_at) | Token::DirectiveOpening(attribute_at) | Token::ClosingTagOpening(attribute_at) | Token::DirectiveClosing(attribute_at) | Token::End(attribute_at) | Token::Word(attribute_at, ..) | Token::Quote(attribute_at, ..) => {
-                    attributes.push(ParsedAttribute {
-                        key,
-                        value: ParsedExpression::Empty(attribute_at.clone(), attribute_at.clone()),
-                    });
-                    continue;
-                }
-                Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
-            };
-            self.next(); self.skip_whitespace();
-            let value = match self.t {
-                Token::Word(text_from, w) | Token::Quote(text_from, w) => {
-                    let text_to = self.next_position();
-                    let text = ParsedText { text: String::from(w), from: text_from.clone(), to: text_to };
-                    self.next();
-                    text.into()
-                }
-                Token::BracketOpening(..) => {
-                    let argument = self.parse_bracket()?;
-                    argument
-                }
-                Token::DictionaryOpening(..) => {
-                    self.next();
-                    let dictionary = self.parse_dictionary()?;
-                    if !matches!(self.t, Token::DictionaryClosing(..)) {
-                        return Err(ParseError::ExpectedDictionaryClosing(self.position()));
-                    };
-                    self.next();
-                    dictionary.into()
-                }
-                Token::SequenceOpening(..) => {
-                    self.next();
-                    let sequence = self.parse_sequence()?;
-                    if !matches!(self.t, Token::SequenceClosing(..)) {
-                        let at = self.position();
-                        return Err(ParseError::ExpectedClosingSquare(at));
-                    };
-                    self.next();
-                    sequence.into()
-                }
-                Token::DirectiveOpening(..) => {
-                    let directive = self.parse_command_expression()?;
-                    directive.into()
-                }
-                Token::BracketClosing(at) | Token::DictionaryClosing(at) | Token::Semicolon(at)
-                | Token::Diamond(at) | Token::Colon(at) | Token::SequenceClosing(at)
-                | Token::DirectiveClosing(at) | Token::End(at) | Token::ClosingTagOpening(at) => {
-                    return Err(ParseError::ExpectedAttributeArgument(at.clone()));
-                }
-                Token::OpeningTagOpening(at) => {
-                    return Err(ParseError::IllegalTagAttribute(at.clone()));
-                }
-                Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
-            };
-            attributes.push(ParsedAttribute { key, value });
-            self.skip_whitespace();
-        };
+        self.next();
     }
 
-    /// Parse a bracket.
-    ///
-    /// Handles the patterns:
-    /// ```text
-    /// <>"{" <expr> "}"
-    /// <>"{" <dictp> "}"
-    /// ```
-    fn parse_bracket(&mut self) -> Result<ParsedExpression, ParseError> {
-        let argument;
-        self.next(); self.skip_whitespace();
-        match self.t {
-            Token::SequenceOpening(..) | Token::BracketOpening(..) | Token::DictionaryOpening(..) | Token::DirectiveOpening(..) | Token::OpeningTagOpening(..) | Token::ClosingTagOpening(..) => {
-                let expression = self.parse_expression()?;
-                argument = expression.into();
-            }
-            Token::Colon(..) => {
-                let dictionary = self.parse_dictionary()?;
-                argument = dictionary.into();
-            }
-            Token::Word(..) | Token::Quote(..) => {
-                self.skip_lookahead_whitespace();
-                match self.t2 {
-                    Token::Semicolon(..) | Token::Colon(..) => {
-                        let dictionary = self.parse_dictionary()?;
-                        argument = dictionary.into();
-                    }
-                    Token::Word(..) | Token::Quote(..) | Token::Diamond(..) | Token::OpeningTagOpening(..) | Token::BracketOpening(..) | Token::DictionaryOpening(..) | Token::DictionaryClosing(..) | Token::SequenceOpening(..) | Token::BracketClosing(..) | Token::DirectiveOpening(..) | Token::ClosingTagOpening(..) | Token::DirectiveClosing(..) | Token::End(..) | Token::SequenceClosing(..) => {
-                        let expression = self.parse_expression()?;
-                        argument = expression.into();
-                    }
-                    Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
-                };
-            }
-            Token::BracketClosing(at) | Token::DictionaryClosing(at) | Token::SequenceClosing(at) | Token::Diamond(at) | Token::Semicolon(at) | Token::DirectiveClosing(at) | Token::End(at) => {
-                argument = ParsedExpression::Empty(at.clone(), at.clone());
-            }
-            Token::Whitespace(..) | Token::Comment(..) => unreachable!(),
-        };
-        if !matches!(self.t, Token::BracketClosing(..)) {
-            return Err(ParseError::ExpectedClosingBracket(self.position()));
-        };
-        self.next();
-        Ok(argument)
+    fn token_type(&self) -> TokenType {
+        self.t.to_type()
+    }
+
+    fn expectation_error<T>(&self, token_type: &'static[TokenType]) -> Result<T> {
+        Err(ParseError::Expected(token_type, self.token_type(), self.position()))
     }
 
 }
 
+//// Parser
+////
+//// Approximate recursive descent, but with modifications that require no backtracking
+//// or large lookahead.
+
+/// Parse a nullable expression.
+///
+/// Recognizes `<null-expr>`.
+///
+/// ```text
+/// # Nullable expression
+/// # Spans Expression object.
+/// <null-expr> = <>
+///             | <expr>
+/// ```
+fn parse_nullable_expression<'a>(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedExpression> {
+    if matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Query(..) | Token::HashQuery(..) | Token::Quote(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::LeftAnglePlus(..)) {
+        parse_expression(iter, strings)
+    } else {
+        let from = iter.position();
+        iter.skip_whitespace();
+        let to = iter.position();
+        Ok(ParsedComponent::empty(from, to).into())
+    }
+}
+
+/// Parse an expression.
+///
+/// Recognizes `<expr>`.
+///
+/// ```text
+/// # Expression
+/// # Spans Expression object.
+/// <expr> = <>"?"<>                            # Empty expression.
+///        | <><expr-sentence><>                # An expression consisting of a single sentence. This sentence cannot be a standalone `?`.
+///        | <><sentence> <expr-tail-no-text><> # A sentence must be followed by another component, since the sentence can be "?".
+///        | <><expr-tail-no-text><>
+/// ```
+fn parse_expression(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedExpression> {
+    let mut components: Vec<ParsedComponent> = vec![];
+    let whitespace = vec![];
+    let from = iter.position();
+    let mut after_whitespace = iter.skip_whitespace();
+    if matches!(iter.t, Token::Query(..)) {
+        let query_from = iter.position();
+        iter.next();
+        let query_to = iter.position();
+        after_whitespace = iter.skip_whitespace();
+        match iter.t {
+            Token::Word(..) | Token::Query(..) | Token::HashQuery(..) => {
+                let mut sentence_head = String::new();
+                sentence_head.push('?');
+                if after_whitespace {
+                    sentence_head.push(' ')
+                };
+                let text = parse_sentence_with(iter, strings, query_from, sentence_head)?.into();
+                components.push(text);
+                parse_expression_tail_with(iter, strings, from, components, whitespace, false)
+            }
+            Token::Quote(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::LeftAnglePlus(..) => {
+                let str = store_str(strings, "?");
+                let text = ParsedText { str, from: query_from, to: query_to };
+                components.push(text.into());
+                parse_expression_tail_with(iter, strings, from, components, whitespace, after_whitespace)
+            }
+            Token::Whitespace(..) => unreachable!(),
+            _ => {
+                let to = iter.position();
+                Ok(ParsedComponent::Empty(from, to).into())
+            }
+        }
+    } else {
+        parse_expression_tail_with(iter, strings, from, components, whitespace, after_whitespace)
+    }
+}
+
+/// Parse a nullable expression tail with an initial state.
+///
+/// Recognizes `<>` and `<><expr-tail>`.
+fn parse_nullable_expression_tail_with(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>, from: Position, components: Vec<ParsedComponent>, whitespace: Vec<bool>) -> Result<ParsedExpression> {
+    let components = components;
+    let whitespace = whitespace;
+    if matches!(iter.t, Token::Word(..) | Token::Query(..) | Token::HashQuery(..) | Token::Quote(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::LeftAnglePlus(..)) {
+        parse_expression_tail_with(iter, strings, from, components, whitespace, false)
+    } else {
+        iter.skip_whitespace();
+        let to = iter.position();
+        Ok(ParsedComponent::from_components(from, to, components, whitespace).into())
+    }
+}
+
+/// Parse an expression tail with an initial state.
+///
+/// Recognizes `<><expr-tail>`.
+///
+/// ```text
+/// # Component of an expression
+/// <expr-tail> = <sentence> <expr-tail-no-text>
+///             | <expr-tail-no-text>
+///
+/// <expr-tail-no-text> = <quote>
+///                     | <quote> <expr-tail>
+///                     | <expr-cmp>
+///                     | <expr-cmp> <expr-tail>
+///                     | <dict-cmp>
+///                     | <dict-cmp> <expr-tail>
+///                     | <table-cmp>
+///                     | <table-cmp> <expr-tail>
+///                     | <tag-expr>
+///                     | <tag-expr> <expr-tail>
+///                     | <closed-cmd-expr>
+///                     | <closed-cmd-expr> <expr-tail>
+///                     | <open-cmd-expr>
+///                     | <open-cmd-expr>_<expr-tail>
+///                     | <open-cmd-expr><expr-tail-no-text>
+/// ```
+fn parse_expression_tail_with(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>, from: Position, components: Vec<ParsedComponent>, whitespace: Vec<bool>, after_whitespace: bool) -> Result<ParsedExpression> {
+    let mut components = components;
+    let mut whitespace = whitespace;
+    let mut after_whitespace = after_whitespace;
+    loop {
+        match iter.t {
+            Token::Word(..) | Token::Query(..) | Token::HashQuery(..) => push_component(&mut components, &mut whitespace, &mut after_whitespace, parse_sentence(iter, strings)?.into()),
+            Token::Quote(..) => push_component(&mut components, &mut whitespace, &mut after_whitespace, parse_quote(iter, strings)?.into()),
+            Token::LeftBracket(..) => push_component(&mut components, &mut whitespace, &mut after_whitespace, parse_bracket_component(iter, strings)?),
+            Token::LeftSquare(..) => push_component(&mut components, &mut whitespace, &mut after_whitespace, parse_table_component(iter, strings)?.into()),
+            Token::LeftAngle(..) => push_component(&mut components, &mut whitespace, &mut after_whitespace, parse_command_expression(iter, strings)?.into()),
+            Token::LeftAnglePlus(..) => push_component(&mut components, &mut whitespace, &mut after_whitespace, parse_tag_expression(iter, strings)?.into()),
+            Token::Whitespace(..) => {
+                iter.skip_whitespace();
+                after_whitespace = true;
+            },
+            _ => break,
+        };
+    };
+    let to = iter.position();
+    Ok(ParsedComponent::from_components(from, to, components, whitespace).into())
+}
+
+fn push_component(components: &mut Vec<ParsedComponent>, whitespace: &mut Vec<bool>, after_whitespace: &mut bool, component: ParsedComponent) {
+    if components.len() != 0 {
+        if *after_whitespace {
+            whitespace.push(true);
+        } else {
+            whitespace.push(false);
+        };
+        *after_whitespace = false;
+    };
+    components.push(component);
+}
+
+/// Parse a bracket component.
+///
+/// Recognizes `<expr-cmp>` and `<dict-cmp>`.
+///
+/// ```text
+/// # Expression component
+/// # Spans an ExpressionComponent object.
+/// <expr-cmp> = "{"<expr>"}"
+///
+/// # Dictionary component
+/// # Spans a DictionaryComponent object.
+/// <dict-cmp> = "{"<dict-head>"}"
+///            | "{"<dict>"#}"
+/// ```
+fn parse_bracket_component(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedComponent> {
+    if !matches!(iter.t, Token::LeftBracket(..)) {
+        return iter.expectation_error(&[TokenType::LeftBracket]);
+    };
+    iter.next();
+    let from = iter.position();
+    iter.skip_whitespace();
+    return match iter.t {
+        Token::Word(..) | Token::HashQuery(..) | Token::Query(..) => {
+            let (candidate, candidate_from, candidate_to) = if matches!(iter.t, Token::Query(..)) && matches!(iter.t2, Token::Whitespace(..)) {
+                let key_from = iter.position();
+                iter.next();
+                let key_to = iter.position();
+                if matches!(iter.peek_next_glyph_token(), Token::Bar(..) | Token::Diamond(..) | Token::RightBracket(..) | Token::HashRightBracket(..) | Token::RightSquare(..) | Token::HashRightSquare(..) | Token::LeftAngleMinus(..) | Token::RightAngle(..) | Token::End(..)) {
+                    iter.skip_whitespace();
+                    let to = iter.position();
+                    return Ok(ParsedComponent::Empty(from, to));
+                };
+                (String::from("?"), key_from, key_to)
+            } else {
+                parse_word(iter, strings)?
+            };
+            match iter.peek_next_glyph_token() {
+                Token::Word(..) | Token::Query(..) | Token::HashQuery(..) => handle_sentence_after_plain_key(iter, strings, candidate_from, candidate, from),
+                Token::Quote(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::LeftAnglePlus(..) => handle_component_after_key(iter, strings, from, candidate, candidate_from, candidate_to),
+                Token::Colon(..) => handle_colon_after_key(iter, strings, candidate, from),
+                Token::Semicolon(..) => handle_semicolon_after_key(iter, strings, candidate, from),
+                Token::Whitespace(..) => unreachable!(),
+                _ => handle_closing_after_key(iter, strings, candidate, candidate_from, candidate_to),
+            }
+        }
+        Token::Quote(.., quote) => {
+            let quote = String::from(quote);
+            let quote_from = iter.position();
+            iter.next();
+            let quote_to = iter.position();
+            match iter.peek_next_glyph_token() {
+                Token::Word(..) | Token::Quote(..) | Token::Query(..) | Token::HashQuery(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::LeftAnglePlus(..) => handle_component_after_key(iter, strings, from, quote, quote_from, quote_to),
+                Token::Colon(..) => handle_colon_after_key(iter, strings, quote, from),
+                Token::Semicolon(..) => handle_semicolon_after_key(iter, strings, quote, from),
+                Token::Whitespace(..) => unreachable!(),
+                _ => handle_closing_after_key(iter, strings, quote, quote_from, quote_to),
+            }
+        }
+        Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::LeftAnglePlus(..) => {
+            let expression = parse_expression(iter, strings)?;
+            if !matches!(iter.t, Token::RightBracket(..)) {
+                return iter.expectation_error(&[TokenType::RightBracket]);
+            };
+            iter.next();
+            Ok(expression.into())
+        }
+        Token::RightBracket(..) => {
+            let to = iter.position();
+            iter.next();
+            Ok(ParsedComponent::Empty(from, to))
+        }
+        Token::HashRightBracket(..) => {
+            let to = iter.position();
+            iter.next();
+            Ok(ParsedDictionary { entries: vec![], from, to }.into())
+        }
+        Token::Whitespace(..) => unreachable!(),
+        _ => return iter.expectation_error(&[TokenType::Word, TokenType::Quote, TokenType::Query, TokenType::HashQuery, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::LeftAnglePlus, TokenType::RightBracket, TokenType::HashRightBracket]),
+    };
+    fn handle_colon_after_key(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>, candidate: String, from: Position) -> Result<ParsedComponent> {
+        iter.consume_next_glyph_token();
+        let key = store_str(strings, &candidate);
+        let value = parse_expression(iter, strings)?;
+        let entry = (key, value);
+        let entries = vec![entry];
+        if matches!(iter.t, Token::Semicolon(..)) {
+            iter.next();
+            if matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Query(..) | Token::HashQuery(..) | Token::Quote(..)) {
+                let dictionary = parse_dictionary_with(iter, strings, from, entries)?.into();
+                if !matches!(iter.t, Token::RightBracket(..) | Token::HashRightBracket(..)) {
+                    return iter.expectation_error(&[TokenType::RightBracket, TokenType::HashRightBracket]);
+                };
+                iter.next();
+                Ok(dictionary)
+            } else {
+                iter.skip_whitespace();
+                let to = iter.position();
+                if !matches!(iter.t, Token::RightBracket(..) | Token::HashRightBracket(..)) {
+                    return iter.expectation_error(&[TokenType::RightBracket, TokenType::HashRightBracket]);
+                };
+                iter.next();
+                Ok(ParsedDictionary { entries, from, to }.into())
+            }
+        } else {
+            let to = iter.position();
+            if !matches!(iter.t, Token::RightBracket(..) | Token::HashRightBracket(..)) {
+                return iter.expectation_error(&[TokenType::RightBracket, TokenType::HashRightBracket]);
+            };
+            iter.next();
+            Ok(ParsedDictionary { entries, from, to }.into())
+        }
+    }
+    fn handle_semicolon_after_key(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>, candidate: String, from: Position) -> Result<ParsedComponent> {
+        iter.skip_whitespace();
+        let at = iter.position();
+        iter.next();
+        let key = store_str(strings, &candidate);
+        let value = ParsedComponent::Empty(at, at).into();
+        let entry = (key, value);
+        let entries = vec![entry];
+        if matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Query(..) | Token::HashQuery(..) | Token::Quote(..)) {
+            let dictionary = parse_dictionary_with(iter, strings, from, entries)?.into();
+            if !matches!(iter.t, Token::RightBracket(..) | Token::HashRightBracket(..)) {
+                return iter.expectation_error(&[TokenType::RightBracket, TokenType::HashRightBracket]);
+            };
+            iter.next();
+            Ok(dictionary)
+        } else {
+            iter.skip_whitespace();
+            let to = iter.position();
+            if !matches!(iter.t, Token::RightBracket(..) | Token::HashRightBracket(..)) {
+                return iter.expectation_error(&[TokenType::RightBracket, TokenType::HashRightBracket]);
+            };
+            iter.next();
+            Ok(ParsedDictionary { entries, from, to }.into())
+        }
+    }
+    fn handle_component_after_key(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>, from: Position, candidate: String, candidate_from: Position, candidate_to: Position) -> Result<ParsedComponent> {
+        let candidate = store_str(strings, &candidate);
+        let text = ParsedText { str: candidate, from: candidate_from, to: candidate_to }.into();
+        let components = vec![text];
+        let after_whitespace = iter.skip_whitespace();
+        let expression = parse_expression_tail_with(iter, strings, from, components, vec![], after_whitespace)?.into();
+        if !matches!(iter.t, Token::RightBracket(..)) {
+            return iter.expectation_error(&[TokenType::RightBracket]);
+        };
+        iter.next();
+        Ok(expression)
+    }
+    fn handle_sentence_after_plain_key(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>, text_from: Position, mut word: String, from: Position) -> Result<ParsedComponent> {
+        iter.skip_whitespace();
+        word.push(' ');
+        let sentence = parse_sentence_with(iter, strings, text_from, word)?.into();
+        let components = vec![sentence];
+        let expression = parse_nullable_expression_tail_with(iter, strings, from, components, vec![])?.into();
+        if !matches!(iter.t, Token::RightBracket(..)) {
+            return iter.expectation_error(&[TokenType::RightBracket]);
+        };
+        iter.next();
+        Ok(expression)
+    }
+    fn handle_closing_after_key(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>, key: String, key_from: Position, key_to: Position) -> Result<ParsedComponent> {
+        iter.skip_whitespace();
+        let str = store_str(strings, &key);
+        if !matches!(iter.t, Token::RightBracket(..)) {
+            return iter.expectation_error(&[TokenType::RightBracket]);
+        };
+        iter.next();
+        Ok(ParsedText { str, from: key_from, to: key_to }.into())
+    }
+}
+
+/// Parse a nullable dictionary.
+///
+/// Recognizes `<null-dict>`.
+///
+/// ```text
+/// # Nullable dictionary
+/// <null-dict> = <>
+///             | <dict>
+/// ```
+fn parse_nullable_dictionary(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedDictionary> {
+    match iter.peek_next_glyph_token() {
+        Token::Word(..) | Token::Quote(..) | Token::Query(..) | Token::HashQuery(..) => parse_dictionary(iter, strings),
+        Token::Whitespace(..) => unreachable!(),
+        _ => {
+            let from = iter.position();
+            iter.skip_whitespace();
+            let to = iter.position();
+            Ok(ParsedDictionary::empty(from, to))
+        }
+    }
+}
+
+/// Parse a dictionary.
+///
+/// Recognizes `<dict>`.
+///
+/// ```text
+/// # Dictionary
+/// <dict> = <><word> ":"<expr>               # Last entry
+///        | <><word> ":"<expr>";"<>          # Last entry with trailing semicolon
+///        | <><word> ":"<expr>";"<dict>      # Intermediary entry
+///        | <><word> ";"<>                   # Last key
+///        | <><word> ";"<dict>               # Intermediary key
+/// ```
+fn parse_dictionary(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedDictionary> {
+    let entries = vec![];
+    let from = iter.position();
+    parse_dictionary_with(iter, strings, from, entries)
+}
+
+/// Parse a dictionary with an initial state.
+///
+/// Recognizes `<dict>`.
+///
+/// ```text
+/// # Dictionary
+/// <dict> = <><word> ":"<expr>          # Last entry
+///        | <><word> ":"<expr>";"<>     # Last entry with trailing semicolon
+///        | <><word> ":"<expr>";"<dict> # Intermediary entry
+///        | <><word> ";"<>              # Last key
+///        | <><word> ";"<dict>          # Intermediary key
+/// ```
+fn parse_dictionary_with(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>, from: Position, with: Vec<(Rc<str>, ParsedExpression)>) -> Result<ParsedDictionary> {
+    let mut entries = with;
+    if !matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quote(..) | Token::Query(..) | Token::HashQuery(..)) {
+        iter.skip_whitespace();
+        return iter.expectation_error(&[TokenType::Word, TokenType::Quote, TokenType::Query, TokenType::HashQuery]);
+    };
+    loop {
+        iter.skip_whitespace();
+        let (key, _, _) = parse_word(iter, strings)?;
+        let key = store_str(strings, &key);
+        iter.skip_whitespace();
+        match iter.t {
+            Token::Colon(..) => {
+                iter.next();
+                let value = parse_expression(iter, strings)?;
+                let entry = (key, value);
+                entries.push(entry);
+                if !matches!(iter.t, Token::Semicolon(..)) {
+                    let to = iter.position();
+                    return Ok(ParsedDictionary { entries, from, to });
+                };
+                iter.next();
+                if !matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quote(..) | Token::Query(..) | Token::HashQuery(..)) {
+                    iter.skip_whitespace();
+                    let to = iter.position();
+                    return Ok(ParsedDictionary { entries, from, to });
+                };
+            }
+            Token::Semicolon(..) => {
+                let at = iter.position();
+                let value = ParsedComponent::Empty(at, at).into();
+                let entry = (key, value);
+                entries.push(entry);
+                iter.next();
+                if !matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quote(..) | Token::Query(..) | Token::HashQuery(..)) {
+                    iter.skip_whitespace();
+                    let to = iter.position();
+                    return Ok(ParsedDictionary { entries, from, to });
+                };
+            }
+            Token::Whitespace(..) => unreachable!(),
+            _ => return iter.expectation_error(&[TokenType::Colon, TokenType::Semicolon]),
+        };
+    };
+}
+
+/// Parse a nullable table.
+///
+/// Recognizes `<null-table>`.
+///
+/// ```text
+/// <null-table> = <>
+///              | <table>
+/// ```
+fn parse_nullable_table(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedTable> {
+    match iter.peek_next_glyph_token() {
+        Token::Word(..) | Token::Quote(..) | Token::Bar(..) | Token::Query(..) | Token::HashQuery(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::LeftAnglePlus(..) => {
+            parse_table(iter, strings)
+        }
+        Token::Whitespace(_) => unreachable!(),
+        _ => {
+            let from = iter.position();
+            iter.skip_whitespace();
+            let to = iter.position();
+            Ok(ParsedTable { elements: vec![], from, to, columns: 0 })
+        },
+    }
+}
+
+/// Parse a table.
+///
+/// Recognizes `<table>`.
+///
+/// ```text
+/// # Table
+/// <table> = <seq>
+///         | <><tab><>
+///
+/// # Table in sequential notation
+/// # Though not encoded in the grammar, all rows must have the same number of columns.
+/// <seq> = <expr>         # Element, end
+///       | <expr>";"<>    # Element with trailing semicolon
+///       | <expr>";"<seq> # Element, next row
+///       | <expr>"|"<seq> # Element, next column
+///
+/// # Table in tabular notation
+/// # Though not encoded in the grammar, all rows must have the same number of columns.
+/// <tab> = "|"<expr><tab> # Append entry to row
+///       | "|" <tab>      # Next row
+///       | "|"            # End
+/// ```
+fn parse_table(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedTable> {
+    match iter.peek_next_glyph_token() {
+        Token::Word(..) | Token::Query(..) | Token::HashQuery(..) | Token::Quote(..) | Token::LeftSquare(..) | Token::LeftBracket(..) | Token::LeftAngle(..) | Token::LeftAnglePlus(..) => parse_sequence_notation(iter, strings),
+        Token::Bar(..) => {
+            let from = iter.position();
+            iter.skip_whitespace();
+            let (elements, columns) = parse_tabular_notation(iter, strings)?;
+            iter.skip_whitespace();
+            let to = iter.position();
+            Ok(ParsedTable { elements, from, to, columns })
+        },
+        Token::Whitespace(..) => unreachable!(),
+        _ => {
+            iter.skip_whitespace();
+            iter.expectation_error(&[TokenType::Word, TokenType::Query, TokenType::HashQuery, TokenType::Quote, TokenType::LeftSquare, TokenType::LeftBracket, TokenType::LeftAngle, TokenType::LeftAnglePlus, TokenType::Bar])
+        }
+    }
+}
+
+/// Parse a table written in sequence notation.
+///
+/// Recognizes `<seq>`.
+///
+/// ```text
+/// # Table in sequential notation
+/// # Though not encoded in the grammar, all rows must have the same number of columns.
+/// <seq> = <expr>         # Element, end
+///       | <expr>";"<>    # Element with trailing semicolon
+///       | <expr>";"<seq> # Element, next row
+///       | <expr>"|"<seq> # Element, next column
+/// ```
+fn parse_sequence_notation(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedTable> {
+    let mut elements = vec![];
+    let mut columns = 0;
+    let from = iter.position();
+    loop { // Read the first row, and determine number of columns.
+        let element = parse_expression(iter, strings)?;
+        elements.push(element);
+        columns += 1;
+        match iter.t {
+            Token::Semicolon(..) => {
+                iter.next();
+                if matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quote(..) | Token::Query(..) | Token::HashQuery(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::LeftAnglePlus(..)) {
+                    break;
+                } else {
+                    iter.skip_whitespace();
+                    let to = iter.position();
+                    return Ok(ParsedTable { elements, from, to, columns });
+                };
+            }
+            Token::Bar(..) => {
+                iter.next();
+                if !matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quote(..) | Token::Query(..) | Token::HashQuery(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::LeftAnglePlus(..)) {
+                    iter.skip_whitespace();
+                    return iter.expectation_error(&[TokenType::Word, TokenType::Quote, TokenType::Query, TokenType::HashQuery, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::LeftAnglePlus])
+                };
+            },
+            Token::Colon(..) | Token::Diamond(..) | Token::RightSquare(..) | Token::HashRightSquare(..) | Token::RightBracket(..) | Token::HashRightBracket(..) | Token::LeftAngleMinus(..) | Token::RightAngle(..) | Token::End(..) => {
+                let to = iter.position();
+                return Ok(ParsedTable { elements, from, to, columns });
+            },
+            Token::Word(..) | Token::Quote(..) | Token::Query(..) | Token::HashQuery(..) | Token::LeftSquare(..) | Token::LeftBracket(..) | Token::LeftAngle(..) | Token::LeftAnglePlus(..) | Token::Whitespace(..) => unreachable!(),
+        }
+    };
+    loop {
+        let mut c = 0;
+        loop {
+            let element = parse_expression(iter, strings)?;
+            elements.push(element);
+            c += 1;
+            match iter.t {
+                Token::Semicolon(..) => {
+                    if c != columns {
+                        return Err(ParseError::ExpectedColumns(iter.position(), c, columns));
+                    };
+                    iter.next();
+                    if matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quote(..) | Token::Query(..) | Token::HashQuery(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::LeftAnglePlus(..)) {
+                        break;
+                    } else {
+                        iter.skip_whitespace();
+                        let to = iter.position();
+                        return Ok(ParsedTable { elements, from, to, columns });
+                    };
+                }
+                Token::Bar(..) => iter.next(),
+                Token::Colon(..) | Token::Diamond(..) | Token::RightSquare(..) | Token::HashRightSquare(..) | Token::RightBracket(..) | Token::HashRightBracket(..) | Token::LeftAngleMinus(..) | Token::RightAngle(..) | Token::End(..) => {
+                    if c != columns {
+                        return Err(ParseError::ExpectedColumns(iter.position(), c, columns));
+                    };
+                    let to = iter.position();
+                    return Ok(ParsedTable { elements, from, to, columns });
+                },
+                Token::Word(..) | Token::Quote(..) | Token::Query(..) | Token::HashQuery(..) | Token::LeftSquare(..) | Token::LeftBracket(..) | Token::LeftAngle(..) | Token::LeftAnglePlus(..) | Token::Whitespace(..) => unreachable!(),
+            }
+        };
+    }
+}
+
+/// Parse a table written in tabular notation.
+///
+/// Recognizes `<tab>`.
+///
+/// ```text
+/// # Table in tabular notation
+/// # Though not encoded in the grammar, all rows must have the same number of columns.
+/// <tab> = "|"<expr><tab> # Append entry to row
+///       | "|" <tab>      # Next row
+///       | "|"            # End
+/// ```
+fn parse_tabular_notation(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<(Vec<ParsedExpression>, usize)> {
+    let mut elements = vec![];
+    let mut columns = 0;
+    loop { // Parse the first row.
+        if !matches!(iter.t, Token::Bar(..)) {
+            return iter.expectation_error(&[TokenType::Bar]);
+        };
+        iter.next();
+        match iter.peek_next_glyph_token() {
+            Token::Word(..) | Token::Quote(..) | Token::Query(..) | Token::HashQuery(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::LeftAnglePlus(..) => {
+                let expression = parse_expression(iter, strings)?;
+                columns += 1;
+                elements.push(expression);
+            }
+            Token::Bar(..) => {
+                iter.skip_whitespace();
+                if columns == 0 {
+                    return Err(ParseError::ZeroColumns(iter.position()));
+                };
+                break;
+            }
+            Token::Whitespace(..) => unreachable!(),
+            _ => {
+                if columns == 0 {
+                    return Err(ParseError::ZeroColumns(iter.position()));
+                };
+                return Ok((elements, columns));
+            }
+        }
+    };
+    loop { // Parse the remaining rows.
+        let mut c = 0;
+        loop {
+            if !matches!(iter.t, Token::Bar(..)) {
+                return iter.expectation_error(&[TokenType::Bar]);
+            };
+            iter.next();
+            match iter.peek_next_glyph_token() {
+                Token::Word(..) | Token::Quote(..) | Token::Query(..) | Token::HashQuery(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::LeftAnglePlus(..) => {
+                    let expression = parse_expression(iter, strings)?;
+                    c += 1;
+                    elements.push(expression);
+                }
+                Token::Bar(..) => {
+                    iter.skip_whitespace();
+                    if c != columns {
+                        return Err(ParseError::ExpectedColumns(iter.position(), c, columns))
+                    };
+                    break;
+                }
+                Token::Whitespace(..) => unreachable!(),
+                _ => {
+                    if c != columns {
+                        return Err(ParseError::ExpectedColumns(iter.position(), c, columns))
+                    };
+                    return Ok((elements, columns));
+                }
+            };
+        };
+    };
+}
+
+/// Parse a table component.
+///
+/// Recognizes `<table-cmp>`.
+///
+/// ```text
+/// # Table component
+/// <table-cmp> = "["<table>"]"
+///             | "["<null-table>"#]"
+/// ```
+fn parse_table_component(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedTable> {
+    if !matches!(iter.t, Token::LeftSquare(..)) {
+        return iter.expectation_error(&[TokenType::LeftSquare]);
+    };
+    iter.next();
+    match iter.peek_next_glyph_token() {
+        Token::Word(..) | Token::Quote(..) | Token::Query(..) | Token::HashQuery(..) | Token::Bar(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::LeftAnglePlus(..) => {
+            let table = parse_table(iter, strings)?;
+            if !matches!(iter.t, Token::RightSquare(..) | Token::HashRightSquare(..)) {
+                return iter.expectation_error(&[TokenType::RightSquare, TokenType::HashRightSquare]);
+            };
+            iter.next();
+            Ok(table)
+        }
+        Token::HashRightSquare(..) => {
+            let from = iter.position();
+            iter.skip_whitespace();
+            let to = iter.position();
+            Ok(ParsedTable { elements: vec![], from, to, columns: 0 })
+        }
+        Token::Whitespace(..) => unreachable!(),
+        _ => {
+            iter.skip_whitespace();
+            iter.expectation_error(&[TokenType::Word, TokenType::Quote, TokenType::Query, TokenType::HashQuery, TokenType::Bar, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::LeftAnglePlus, TokenType::HashRightSquare])
+        },
+    }
+}
+
+/// Parse a command.
+///
+/// ```text
+/// # Command
+/// <cmd> = "<" <word> ">"
+///       | "<" <word> <attr> ">"
+/// ```
+fn parse_command(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<(String, Vec<(Rc<str>, ParsedExpression)>)> {
+    if !matches!(iter.t, Token::LeftAngle(..)) {
+        return iter.expectation_error(&[TokenType::LeftAngle]);
+    };
+    iter.next();
+    parse_command_remainder(iter, strings)
+}
+
+/// Parse the remainder of a command.
+fn parse_command_remainder(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<(String, Vec<(Rc<str>, ParsedExpression)>)> {
+    iter.skip_whitespace();
+    if !matches!(iter.t, Token::Word(..) | Token::Query(..) | Token::HashQuery(..)) {
+        return iter.expectation_error(&[TokenType::Word, TokenType::Query, TokenType::HashQuery]);
+    };
+    let (directive, _, _) = parse_word(iter, strings)?;
+    iter.skip_whitespace();
+    let attributes = if matches!(iter.t, Token::Word(..) | Token::Query(..) | Token::HashQuery(..)) {
+        parse_attributes(iter, strings)?
+    } else {
+        vec![]
+    };
+    iter.skip_whitespace();
+    if !matches!(iter.t, Token::RightAngle(..)) {
+        return iter.expectation_error(&[TokenType::RightAngle]);
+    };
+    iter.next();
+    Ok((directive, attributes))
+}
+
+/// Parse attributes.
+///
+/// Recognizes `<attr>.`
+///
+/// ```text
+/// # Attribute
+/// <attr> = <word>
+///        | <word>_<attr>
+///        | <word>":"<word>
+///        | <word>":"<word>_<attr>
+///        | <word>":"<quote>
+///        | <word>":"<quote> <attr>
+///        | <word>":"<expr-cmp>
+///        | <word>":"<expr-cmp> <attr>
+///        | <word>":"<dict-cmp>
+///        | <word>":"<dict-cmp> <attr>
+///        | <word>":"<table-cmp>
+///        | <word>":"<table-cmp> <attr>
+/// ```
+fn parse_attributes(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<Vec<(Rc<str>, ParsedExpression)>> {
+    let mut attributes = vec![];
+    loop {
+        let (key, _key_from, _key_to) = parse_word(iter, strings)?;
+        let value = match iter.t {
+            Token::Colon(..) => {
+                iter.next();
+                match iter.t {
+                    Token::Word(..) | Token::Query(..) | Token::HashQuery(..) => parse_text_word(iter, strings)?.into(),
+                    Token::Quote(..) => parse_quote(iter, strings)?.into(),
+                    Token::LeftBracket(..) => parse_bracket_component(iter, strings)?.into(),
+                    Token::LeftSquare(..) => parse_table_component(iter, strings)?.into(),
+                    _ => return iter.expectation_error(&[TokenType::Word, TokenType::Query, TokenType::HashQuery, TokenType::Quote, TokenType::LeftBracket, TokenType::LeftSquare])
+                }
+            }
+            Token::Word(..) | Token::Query(..) | Token::HashQuery(..) => unreachable!(),
+            _ => {
+                let at = iter.position();
+                ParsedComponent::Empty(at, at).into()
+            }
+        };
+        let key = store_str(strings, &key);
+        let attribute = (key, value);
+        attributes.push(attribute);
+        if !matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Query(..) | Token::HashQuery(..)) {
+            return Ok(attributes);
+        };
+        iter.skip_whitespace();
+    };
+}
+
+/// Parse a command argument.
+///
+/// Recognizes `<cmd>`.
+fn parse_command_argument(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedDirective> {
+    let from = iter.position();
+    let (directive, attributes) = parse_command(iter, strings)?;
+    let directive = store_str(strings, &directive);
+    let to = iter.position();
+    Ok(ParsedDirective { directive, attributes, arguments: vec![], from, to })
+}
+
+/// Parse a command expression.
+///
+/// Recognizes `<open-cmd-expr>` and `<closed-cmd-expr>`.
+///
+/// ```text
+/// # Open command expression
+/// <open-cmd-expr> = <cmd><open-cmd-arg>
+///
+/// # Command argument
+/// <open-cmd-arg> = ":"<arg-word>
+///                | ":"<arg-word><cmd-arg>
+///                | ":"<quote><cmd-arg>
+///                | ":"<expr-cmp><cmd-arg>
+///                | ":"<table-cmp><cmd-arg>
+///                | ":"<dict-cmp><cmd-arg>
+///                | ":"<cmd><cmd-arg>
+///                | ":""<>"":"<open-cmd-expr>
+///
+/// <closed-cmd-expr> = <cmd><closed-cmd-arg>
+///
+/// <closed-cmd-arg> = ":"<arg-word>"?"
+///                  | ":"<arg-word><cmd-arg>
+///                  | ":"<quote><cmd-arg>
+///                  | ":"<quote>
+///                  | ":"<expr-cmp><cmd-arg>
+///                  | ":"<expr-cmp>
+///                  | ":"<table-cmp><cmd-arg>
+///                  | ":"<table-cmp>
+///                  | ":"<dict-cmp><cmd-arg>
+///                  | ":"<dict-cmp>
+///                  | ":"<cmd><cmd-arg>
+///                  | ":"<cmd>
+///                  | ":""<>"":"<closed-cmd-expr>
+/// ```
+fn parse_command_expression(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedDirective> {
+    let from = iter.position();
+    let (directive, attributes) = parse_command(iter, strings)?;
+    let directive = store_str(strings, &directive);
+    let mut arguments = vec![];
+    loop {
+        if !matches!(iter.t, Token::Colon(..)) {
+            break;
+        };
+        iter.next();
+        match iter.t {
+            Token::Word(..) => {
+                let text = parse_argument_word(iter, strings)?;
+                arguments.push(text.into());
+                if matches!(iter.t, Token::Query(..)) {
+                    iter.next();
+                    break;
+                };
+            }
+            Token::Quote(..) => {
+                let text = parse_quote(iter, strings)?;
+                arguments.push(text.into());
+            }
+            Token::LeftBracket(..) => {
+                let argument = parse_bracket_component(iter, strings)?;
+                arguments.push(argument.into());
+            }
+            Token::LeftSquare(..) => {
+                let table = parse_table_component(iter, strings)?;
+                arguments.push(table.into());
+            }
+            Token::LeftAngle(..) => {
+                let command = parse_command_argument(iter, strings)?;
+                arguments.push(command.into());
+            }
+            Token::Diamond(..) => {
+                iter.next();
+                if !matches!(iter.t, Token::Colon(..)) {
+                    return iter.expectation_error(&[TokenType::Colon]);
+                };
+                iter.next();
+                let right_hand_command = parse_command_expression(iter, strings)?;
+                arguments.push(right_hand_command.into());
+            }
+            Token::LeftAnglePlus(at) => {
+                return Err(ParseError::IllegalTagDirectiveArgument(*at));
+            }
+            _ => {
+                return iter.expectation_error(&[TokenType::Word, TokenType::Quote, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Diamond]);
+            }
+        };
+    };
+    let to = iter.position();
+    Ok(ParsedDirective { directive, attributes, arguments, from, to })
+}
+
+/// Parse a tag expression.
+///
+/// Recognizes `<tag-expr>`.
+///
+/// ```text
+/// # Tag expression
+/// <tag-expr> = <opening-tag> <closing-tag>
+///            | <opening-tag> <expr> <closing-tag>
+///            | <opening-tag><closed-tag-arg> <closing-tag>
+///            | <opening-tag><closed-tag-arg> <expr> <closing-tag>
+///            | <opening-tag><open-tag-arg> <closing-tag>
+///            | <opening-tag><open-tag-arg>_<expr> <closing-tag>
+///            | <opening-tag><open-tag-arg><expr-tail-no-text> <closing-tag>
+///
+/// # Opening tag
+/// <opening-tag> = "<+" <word> ">"
+///               | "<+" <word>_<attr> ">"
+///
+/// # Closing tag
+/// <closing-tag> = "<-" ">"
+///               | "<-" <word> ">"
+///
+/// # Tag argument
+/// # A sequence of tag arguments that end with a word.
+/// <open-tag-arg> = ":"<argword>
+///                | ":"<argword>:<open-tag-arg>
+///                | ":"<quote><open-tag-arg>
+///                | ":"<expr-cmp><open-tag-arg>
+///                | ":"<dict-cmp><open-tag-arg>
+///                | ":"<table-cmp><open-tag-arg>
+///                | ":"<cmd><open-tag-arg>
+///
+/// # Tag argument
+/// <closed-tag-arg> = ":"<argword><closed-tag-arg>
+///                  | ":"<argword>"?"
+///                  | ":"<quote><closed-tag-arg>
+///                  | ":"<quote>
+///                  | ":"<expr-cmp><closed-tag-arg>
+///                  | ":"<expr-cmp>
+///                  | ":"<dict-cmp><closed-tag-arg>
+///                  | ":"<dict-cmp>
+///                  | ":"<table-cmp><closed-tag-arg>
+///                  | ":"<table-cmp>
+///                  | ":"<cmd><closed-tag-arg>
+///                  | ":"<cmd>
+/// ```
+fn parse_tag_expression(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedDirective> {
+    let from = iter.position();
+    if !matches!(iter.t, Token::LeftAnglePlus(..)) {
+        return iter.expectation_error(&[TokenType::LeftAnglePlus]);
+    };
+    iter.next();
+    let (directive, attributes) = parse_command_remainder(iter, strings)?;
+    let directive = store_str(strings, &directive);
+    let mut arguments = vec![];
+    loop {
+        if !matches!(iter.t, Token::Colon(..)) {
+            break;
+        };
+        iter.next();
+        match iter.t {
+            Token::Word(..) => {
+                let text = parse_argument_word(iter, strings)?;
+                arguments.push(text.into());
+                if matches!(iter.t, Token::Query(..)) {
+                    iter.next();
+                    break;
+                };
+            }
+            Token::Quote(..) => arguments.push(parse_quote(iter, strings)?.into()),
+            Token::LeftBracket(..) => arguments.push(parse_bracket_component(iter, strings)?.into()),
+            Token::LeftSquare(..) => arguments.push(parse_table(iter, strings)?.into()),
+            Token::LeftAngle(..) => arguments.push(parse_command_argument(iter, strings)?.into()),
+            Token::Diamond(..) => return Err(ParseError::CompositionNotAllowedInTag(iter.position())),
+            Token::LeftAnglePlus(..) => return Err(ParseError::IllegalTagDirectiveArgument(iter.position())),
+            _ => return iter.expectation_error(&[TokenType::Word, TokenType::Quote, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle]),
+        };
+    };
+    let content = parse_nullable_expression(iter, strings)?;
+    let iter = iter;
+    arguments.push(content.into());
+    if !matches!(iter.t, Token::LeftAngleMinus(..)) {
+        return iter.expectation_error(&[TokenType::LeftAngleMinus]);
+    };
+    iter.next();
+    iter.skip_whitespace();
+    if matches!(iter.t, Token::Word(..) | Token::Query(..) | Token::HashQuery(..)) {
+        let (closing_directive, closing_at, ..) = parse_word(iter, strings)?;
+        if !closing_directive.eq(directive.deref()) {
+            return Err(ParseError::MismatchedClosingTag(from, String::from(directive.deref()), closing_at, String::from(directive.deref())));
+        };
+        iter.skip_whitespace();
+    };
+    if !matches!(iter.t, Token::RightAngle(..)) {
+        return iter.expectation_error(&[TokenType::RightAngle]);
+    };
+    iter.next();
+    let to = iter.position();
+    Ok(ParsedDirective { directive, attributes, arguments, from, to, })
+}
+
+/// Parse a sentence.
+///
+/// Recognizes `<sentence>`.
+///
+/// Corresponds to any combination of Word, Query, HashQuery, Whitespace tokens where
+/// Whitespace is not at the beginning or end.
+///
+/// Assumes that the current token is Word, Query or HashQuery.
+fn parse_sentence(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedText> {
+    let sentence = String::new();
+    let from = iter.position();
+    match iter.t {
+        Token::Word(..) | Token::Query(..) | Token::HashQuery(..) => parse_sentence_with(iter, strings, from, sentence),
+        _ => return iter.expectation_error(&[TokenType::Word, TokenType::Query, TokenType::HashQuery]),
+    }
+}
+
+/// Parse a sentence with an initial state. XX
+///
+/// Recognizes `<sentence>`.
+fn parse_sentence_with(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>, from: Position, with: String) -> Result<ParsedText> {
+    let mut sentence = with;
+    loop {
+        match iter.t {
+            Token::Word(.., w) => {
+                sentence.push_str(&w);
+                iter.next();
+            }
+            Token::Query(..) => {
+                sentence.push('?');
+                iter.next();
+            }
+            Token::HashQuery(..) => {
+                sentence.push_str("#?");
+                iter.next();
+            }
+            Token::Whitespace(..) => {
+                match iter.peek_next_glyph_token() {
+                    Token::Word(..) | Token::Query(..) | Token::HashQuery(..) => {
+                        sentence.push(' ');
+                        iter.skip_whitespace();
+                    },
+                    Token::Whitespace(..) => unreachable!(),
+                    _ => break,
+                }
+            }
+            _ => break,
+        };
+    };
+    let to = iter.position();
+    let str = store_str(strings, &sentence);
+    Ok(ParsedText { str, from, to })
+}
+
+/// Parse a word as text.
+fn parse_text_word(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedText> {
+    let (word, from, to) = parse_word(iter, strings)?;
+    let str = store_str(strings, &word);
+    Ok(ParsedText { str, from, to })
+}
+
+/// Parse a word.
+///
+/// Corresponds to any combination of Word, Query, HashQuery tokens.
+///
+/// Used for attribute key, attribute value, directive header, dictionary key,
+fn parse_word(iter: &mut TokenIter, _strings: &mut HashSet<Rc<str>>) -> Result<(String, Position, Position)> {
+    let mut word = String::new();
+    let from = iter.position();
+    if !matches!(iter.t, Token::Word(..) | Token::Query(..) | Token::HashQuery(..)) {
+        return iter.expectation_error(&[TokenType::Word, TokenType::Query, TokenType::HashQuery]);
+    };
+    loop {
+        match iter.t {
+            Token::Word(.., w) => {
+                word.push_str(w);
+                iter.next();
+            }
+            Token::Query(..) => {
+                word.push('?');
+                iter.next();
+            }
+            Token::HashQuery(..) => {
+                word.push_str("#?");
+                iter.next();
+            }
+            _ => break,
+        };
+    };
+    let to = iter.position();
+    Ok((word, from, to))
+}
+
+/// Parse an argument word.
+///
+/// Recognizes `<arg-word>`.
+fn parse_argument_word(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedText> {
+    let mut word = String::new();
+    let from = iter.position();
+    if !matches!(iter.t, Token::Word(..)) {
+        return iter.expectation_error(&[TokenType::Word]);
+    };
+    loop {
+        match iter.t {
+            Token::Word(.., str) => {
+                iter.next();
+                word.push_str(str);
+            }
+            _ => break,
+        };
+    };
+    let to = iter.position();
+    let str = store_str(strings, &word);
+    Ok(ParsedText { str, from, to })
+}
+
+/// Parse a quote.
+///
+/// Recognizes `<quote>`.
+fn parse_quote(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedText> {
+    match iter.t {
+        Token::Quote(from, str) => {
+            iter.next();
+            let to = iter.position();
+            let str = store_str(strings, str);
+            Ok(ParsedText { str, from: *from, to })
+        }
+        _ => iter.expectation_error(&[TokenType::Quote]),
+    }
+}
+
+//// Utility
+
+fn store_str(strings: &mut HashSet<Rc<str>>, candidate: &str) -> Rc<str> {
+    if let Some(str) = strings.get(candidate) {
+        str.clone()
+    } else {
+        let count = Rc::from(candidate);
+        let str = Rc::clone(&count);
+        strings.insert(count);
+        str
+    }
+}
 
 //// Possible parsing errors
 
-
-#[derive(PartialEq, Eq, Clone)]
+#[derive(Clone)]
 pub enum ParseError {
     /// Tried to escape EOS.
     EscapingEndOfStream,
@@ -819,22 +1262,44 @@ pub enum ParseError {
     ExpectedSequenceClosing(Position),
     ExpectedClosingAngularBracket(Position),
     ExpectedClosingSquare(Position),
-    ExpectedOpeningAngularBracket(Position),
     ExpectedColonAfterPrecedenceOperator(Position),
     ExpectedDirectiveAfterPrecedenceOperator(Position),
+
     ExpectedDirectiveClosing(Position),
     ExpectedDirectiveArgument(Position),
+
     ExpectedDirectiveKey(Position),
     ExpectedAttributeArgument(Position),
+
     ExpectedEntrySeparator(Position),
     ExpectedEnd(Position),
     CommentedBracket(Position),
     UnclosedQuote(Position),
     ExpectedClosingTag(Position, String),
+    /// Directive of opening and closing tags do not match.
     MismatchedClosingTag(Position, String, Position, String),
+    /// Tags cannot be used as arguments.
     IllegalTagDirectiveArgument(Position),
     IllegalTagAttribute(Position),
     ExpectedDictionaryClosing(Position),
+    TooManyColumns(Position),
+    TooFewColumns(Position),
+    /// The concatenated table has a different number of columns.
+    MismatchedColumns(Position, usize, usize),
+    ExpectedBar(Position),
+    ZeroColumns(Position),
+    ExpectedColumns(Position, usize, usize),
+    ExpectedBarOrSemicolon(Position),
+    ExpectedTableEntry(Position),
+    /// The token sequence is in invalid order.
+    InvalidTokenSequence(Position),
+    /// Composition of commands not allowed in tag arguments.
+    CompositionNotAllowedInTag(Position),
+    ExpectedWord(Position),
+    /// Expected X but found Y at Z.
+    Expected(&'static[TokenType], TokenType, Position),
+    UnknownEscapeSequence(Position),
+    UnknownHashSequence(Position),
 }
 
 
@@ -863,9 +1328,6 @@ pub fn error_to_string(error: &ParseError) -> String {
         }
         ParseError::ExpectedClosingSquare(at) => {
             format!("Expected closing crotchet at {}:{}.", at.line, at.column)
-        }
-        ParseError::ExpectedOpeningAngularBracket(at) => {
-            format!("Expected opening angular bracket at {}:{}.", at.line, at.column)
         }
         ParseError::ExpectedColonAfterPrecedenceOperator(at) => {
             format!("Expected colon after grouping operator at {}:{}.", at.line, at.column)
@@ -901,7 +1363,7 @@ pub fn error_to_string(error: &ParseError) -> String {
             format!("Expected closing tag matching directive \"{}\" at {}:{}.", directive, at.line, at.column)
         }
         ParseError::MismatchedClosingTag(opening_tag_at, directive, closing_tag_at, mismatch) => {
-            format!("Mismatched closing tag \"{}\" at {}:{} does not match opening tag \"{}\" at {}:{}.", mismatch, closing_tag_at.line, closing_tag_at.column, directive, opening_tag_at.line, opening_tag_at.column)
+            format!("Closing tag directive \"{}\" at {}:{} does not match opening tag \"{}\" at {}:{}.", mismatch, closing_tag_at.line, closing_tag_at.column, directive, opening_tag_at.line, opening_tag_at.column)
         }
         ParseError::IllegalTagDirectiveArgument(at) => {
             format!("Illegal tag as directive argument at {}:{}.", at.line, at.column)
@@ -912,5 +1374,852 @@ pub fn error_to_string(error: &ParseError) -> String {
         ParseError::ExpectedDictionaryClosing(at) => {
             format!("Expected dictionary closing \":}}\" at {}:{}.", at.line, at.column)
         }
+        ParseError::TooManyColumns(at) => {
+            format!("Row has too many columns at {}:{}.", at.line, at.column)
+        }
+        ParseError::TooFewColumns(at) => {
+            format!("Row has too few columns at {}:{}.", at.line, at.column)
+        }
+        ParseError::MismatchedColumns(at, c, columns) => {
+            format!("Cannot append table with {} columns to previous tables with {} columns at {}:{}.", c, columns, at.line, at.column)
+        }
+        ParseError::ExpectedBar(at) => {
+            format!("Expected vertical bar after entry at {}:{}.", at.line, at.column)
+        }
+        ParseError::ZeroColumns(at) => {
+            format!("Row with zero columns at {}:{}.", at.line, at.column)
+        }
+        ParseError::ExpectedColumns(at, c, columns) => {
+            format!("Expected {} columns but found {} at {}:{}.", columns, c, at.line, at.column)
+        }
+        ParseError::ExpectedBarOrSemicolon(at) => {
+            format!("Expected a bar or a semicolon at {}:{}.", at.line, at.column)
+        }
+        ParseError::ExpectedTableEntry(at) => {
+            format!("Expected a table entry at {}:{}.", at.line, at.column)
+        }
+        ParseError::InvalidTokenSequence(at) => {
+            format!("Found an unexpected token at {}:{}.", at.line, at.column)
+        }
+        ParseError::CompositionNotAllowedInTag(at) => {
+            format!("Composition of commands not allowed in tag arguments at {}:{}.", at.line, at.column)
+        }
+        ParseError::ExpectedWord(at) => {
+            format!("Expected Word token at {}:{}.", at.line, at.column)
+        }
+        ParseError::Expected(expected, found, at) => {
+            format!("Expected {} but found {} at {}:{}.", list(expected), found, at.line, at.column)
+        }
+        ParseError::UnknownEscapeSequence(at) => {
+            format!("Encountered unknown escape sequence at {}:{}.", at.line, at.column)
+        }
+        ParseError::UnknownHashSequence(at) => {
+            format!("Encountered unknown hash sequence at {}:{}.", at.line, at.column)
+        }
     }
+}
+
+fn list(expected: &[TokenType]) -> String {
+    let mut str = String::new();
+    let mut iter = expected.iter();
+    if let Some(s) = iter.next() {
+        str.push_str(&format!("{}", s));
+    };
+    while let Some(s) = iter.next() {
+        str.push_str(&format!(" | {}", s));
+    };
+    str
+}
+
+//// Parsing results
+////
+//// Parsing a document yields a nested structure consisting of these structures.
+
+//// Expression
+
+#[derive(RefCast, Clone)]
+#[repr(transparent)]
+pub struct ParsedExpression(ParsedComponent);
+
+impl ParsedExpression {
+
+    fn as_component(&self) -> &ParsedComponent {
+        &self.0
+    }
+
+}
+
+impl Expression<Self, ParsedText, ParsedDictionary, ParsedTable, ParsedDirective, ParsedComponent> for ParsedExpression {
+
+    type ComponentIterator<'b> = ComponentIterator<'b>;
+
+    //type ComponentIterator<'b> =  where Self: 'b, 'b: 'a;
+
+    type ComponentIteratorWithWhitespace<'b> = ComponentIteratorWithWhitespace<'b>;
+
+    fn length(&self) -> usize {
+        match &self.0 {
+            ParsedComponent::Empty(..) => 0,
+            ParsedComponent::Text(ParsedText { .. }) => 1,
+            ParsedComponent::Table(ParsedTable { .. }) => 1,
+            ParsedComponent::Dictionary(ParsedDictionary { .. }) => 1,
+            ParsedComponent::Directive(ParsedDirective { .. }) => 1,
+            ParsedComponent::Compound(components, ..) => components.len(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        matches!(self.0, ParsedComponent::Empty(..))
+    }
+
+    fn is_unary(&self) -> bool {
+        matches!(self.0, ParsedComponent::Text(..) | ParsedComponent::Table(..) | ParsedComponent::Dictionary(..) | ParsedComponent::Directive(..))
+    }
+
+    fn is_compound(&self) -> bool {
+        matches!(self.0, ParsedComponent::Compound(..))
+    }
+
+    fn get(&self, index: usize) -> Option<&ParsedComponent> {
+        match &self.0 {
+            ParsedComponent::Empty(..) => None,
+            c @ ParsedComponent::Text(..) => {
+                if index == 0 { Some(c) } else { None }
+            }
+            c @ ParsedComponent::Table(..) => {
+                if index == 0 { Some(c) } else { None }
+            }
+            c @ ParsedComponent::Dictionary(..) => {
+                if index == 0 { Some(c) } else { None }
+            }
+            c @ ParsedComponent::Directive(..) => {
+                if index == 0 { Some(c) } else { None }
+            }
+            ParsedComponent::Compound(components, ..) => {
+                components.get(index)
+            }
+        }
+    }
+
+    fn iter_components_with_whitespace(&self) -> Self::ComponentIteratorWithWhitespace<'_> {
+        match &self.0 {
+            ParsedComponent::Empty(..) => ComponentIteratorWithWhitespace::Empty,
+            ParsedComponent::Text(..) | ParsedComponent::Dictionary(..) | ParsedComponent::Table(..) | ParsedComponent::Directive(..) => {
+                ComponentIteratorWithWhitespace::Unary { component: &self.0, done: false }
+            }
+            ParsedComponent::Compound(components, whitespace, _from, _to) => {
+                ComponentIteratorWithWhitespace::Compound { components, whitespace, index: 0, after_component: false }
+            }
+        }
+    }
+
+    fn iter_components(&self) -> Self::ComponentIterator<'_> {
+        match &self.0 {
+            ParsedComponent::Empty(..) => ComponentIterator::Empty,
+            ParsedComponent::Text(..) | ParsedComponent::Table(..) | ParsedComponent::Dictionary(..) | ParsedComponent::Directive(..) => {
+                ComponentIterator::Unary { component: &self.0, done: false }
+            },
+            ParsedComponent::Compound(components, _, _, _) => ComponentIterator::Compound { components, index: 0 },
+        }
+    }
+
+    fn conform_text(&self) -> Option<&ParsedText> {
+        if let ParsedComponent::Text(t) = self.as_component() {
+            Some(t)
+        } else {
+            None
+        }
+    }
+
+    fn conform_table(&self) -> Option<&ParsedTable> {
+        if let ParsedComponent::Table(t) = self.as_component() {
+            Some(t)
+        } else {
+            None
+        }
+    }
+
+    fn conform_dictionary(&self) -> Option<&ParsedDictionary> {
+        if let ParsedComponent::Dictionary(d) = self.as_component() {
+            Some(d)
+        } else {
+            None
+        }
+    }
+
+    fn conform_directive(&self) -> Option<&ParsedDirective> {
+        if let ParsedComponent::Directive(d) = self.as_component() {
+            Some(d)
+        } else {
+            None
+        }
+    }
+
+    fn as_component(&self) -> &ParsedComponent {
+        &self.0
+    }
+
+    fn is_text(&self) -> bool {
+        matches!(self.0, ParsedComponent::Text(..))
+    }
+
+    fn is_table(&self) -> bool {
+        matches!(self.0, ParsedComponent::Table(..))
+    }
+
+    fn is_dictionary(&self) -> bool {
+        matches!(self.0, ParsedComponent::Dictionary(..))
+    }
+
+    fn is_directive(&self) -> bool {
+        matches!(self.0, ParsedComponent::Directive(..))
+    }
+
+}
+
+pub enum ComponentIterator<'a> {
+    Empty,
+    Unary { component: &'a ParsedComponent, done: bool },
+    Compound { components: &'a[ParsedComponent], index: usize },
+}
+
+impl <'b> Iterator for ComponentIterator<'b> {
+
+    type Item = &'b ParsedComponent;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            ComponentIterator::Empty => None,
+            ComponentIterator::Unary { component, done } => {
+                if !*done {
+                    *done = true;
+                    Some(component)
+                } else {
+                    None
+                }
+            }
+            ComponentIterator::Compound { components, index } => {
+                if *index < components.len() {
+                    let component = &components.get(*index).unwrap();
+                    *index += 1;
+                    Some(component)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+}
+
+pub enum ComponentIteratorWithWhitespace<'b> {
+    Empty,
+    Unary { component: &'b ParsedComponent, done: bool },
+    Compound { components: &'b[ParsedComponent], whitespace: &'b[bool], index: usize, after_component: bool },
+}
+
+impl <'b> Iterator for ComponentIteratorWithWhitespace<'b> {
+
+    type Item = WhitespaceOption<&'b ParsedComponent>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            ComponentIteratorWithWhitespace::Empty => None,
+            ComponentIteratorWithWhitespace::Unary { component, done } => {
+                if !*done {
+                    *done = true;
+                    Some(WhitespaceOption::Component(component))
+                } else {
+                    None
+                }
+            },
+            ComponentIteratorWithWhitespace::Compound { components, whitespace, index, after_component } => {
+                if *index != components.len() - 1 {
+                    if *after_component {
+                        let whitespace = whitespace[*index];
+                        *index += 1;
+                        if whitespace {
+                            *after_component = false;
+                            return Some(WhitespaceOption::Whitespace);
+                        };
+                    };
+                } else {
+                    if *after_component {
+                        return None;
+                    };
+                };
+                *after_component = true;
+                Some(WhitespaceOption::Component(&components[*index]))
+            }
+        }
+    }
+
+}
+
+impl From<ParsedText> for ParsedExpression {
+
+    fn from(text: ParsedText) -> Self {
+        ParsedComponent::Text(text).into_expression()
+    }
+
+}
+
+impl From<ParsedTable> for ParsedExpression {
+
+    fn from(sequence: ParsedTable) -> Self {
+        ParsedComponent::Table(sequence).into_expression()
+    }
+
+}
+
+impl From<ParsedDictionary> for ParsedExpression {
+
+    fn from(dictionary: ParsedDictionary) -> Self {
+        ParsedComponent::Dictionary(dictionary).into_expression()
+    }
+
+}
+
+impl From<ParsedDirective> for ParsedExpression {
+
+    fn from(command: ParsedDirective) -> Self {
+        ParsedComponent::Directive(command).into_expression()
+    }
+
+}
+
+impl From<ParsedComponent> for ParsedExpression {
+
+    fn from(component: ParsedComponent) -> Self {
+        component.into_expression()
+    }
+
+}
+
+//// Text
+
+#[derive(PartialEq, Eq, Clone)]
+pub struct ParsedText { pub str: Rc<str>, pub from: Position, pub to: Position }
+
+impl Text<ParsedExpression, Self, ParsedDictionary, ParsedTable, ParsedDirective, ParsedComponent> for ParsedText {
+
+    fn as_str(&self) -> &str {
+        &self.str
+    }
+
+}
+
+//// Dictionary
+
+/// A parsed dictionary.
+#[derive(Clone)]
+pub struct ParsedDictionary {
+    pub entries: Vec<(Rc<str>, ParsedExpression)>,
+    pub from: Position,
+    pub to: Position,
+}
+
+impl Dictionary<ParsedExpression, ParsedText, Self, ParsedTable, ParsedDirective, ParsedComponent> for ParsedDictionary {
+
+    type EntryIterator<'a> = EntryIterator<'a>;
+
+    //type EntryIterator<'b> = EntryIterator<'b> where 'a: 'b, EntryIterator<'b>: 'b;
+
+    fn length(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    fn get_by(&self, key: &str) -> Option<&ParsedExpression> {
+        for entry in &self.entries {
+            if key.eq(entry.0.deref()) {
+                return Some(&entry.1);
+            };
+        };
+        None
+    }
+
+    fn get_at(&self, index: usize) -> Option<(&str, &ParsedExpression)> {
+        if let Some(entry) = self.entries.get(index) {
+            Some((entry.0.borrow(), &entry.1))
+        } else {
+            None
+        }
+    }
+
+    fn iter_entries(&self) -> Self::EntryIterator<'_> {
+        EntryIterator { iter: self.entries.iter() }
+    }
+
+}
+
+pub type EntryIterator<'a> = AttributeIterator<'a>;
+
+impl ParsedDictionary {
+
+    pub fn empty(from: Position, to: Position) -> Self {
+        ParsedDictionary { entries: vec![], from, to }
+    }
+
+    pub fn get_entry(&self, key: &str) -> Option<(&str, &ParsedExpression)> {
+        for entry in &self.entries {
+            if key.eq(entry.0.deref()) {
+                return Some((&entry.0, &entry.1));
+            };
+        }
+        return None;
+    }
+
+    pub fn get(&self, key: &str) -> Option<&ParsedExpression> {
+        for entry in &self.entries {
+            if key.eq(entry.0.deref()) {
+                return Some(&entry.1);
+            };
+        }
+        return None;
+    }
+
+    pub fn size(&self) -> usize {
+        self.entries.len()
+    }
+
+}
+
+//// Table
+
+/// A parsed table.
+#[derive(Clone)]
+pub struct ParsedTable {
+    pub elements: Vec<ParsedExpression>,
+    pub from: Position,
+    pub to: Position,
+    pub columns: usize,
+}
+
+impl Table<ParsedExpression, ParsedText, ParsedDictionary, ParsedTable, ParsedDirective, ParsedComponent> for ParsedTable {
+
+    type RowIterator<'b> = RowIterator<'b>;
+
+    type ListIterator<'b> = Iter<'b, ParsedExpression>;
+
+    fn is_empty(&self) -> bool {
+        self.elements.is_empty()
+    }
+
+    fn columns(&self) -> usize {
+       self.columns
+    }
+
+    fn rows(&self) -> usize {
+        if self.columns != 0 {
+            self.elements.len() / self.columns
+        } else {
+            0
+        }
+    }
+
+    fn size(&self) -> usize {
+        self.elements.len()
+    }
+
+    fn get(&self, row: usize, column: usize) -> Option<&ParsedExpression> {
+        self.elements.get(row * self.columns + column)
+    }
+
+    fn get_row(&self, row: usize) -> Option<&[ParsedExpression]> {
+        if self.columns != 0 {
+            Some(&self.elements[row * self.columns .. row * (self.columns + 1)])
+        } else {
+            None
+        }
+    }
+
+    fn iter_rows(&self) -> Self::RowIterator<'_> {
+        RowIterator { columns: self.columns, iter: self.elements.iter() }
+    }
+
+    fn is_list(&self) -> bool {
+        self.columns <= 1
+    }
+
+    fn len_as_list(&self) -> usize {
+        self.elements.len()
+    }
+
+    fn get_list_element(&self, index: usize) -> Option<&ParsedExpression> {
+        self.elements.get(index)
+    }
+
+    fn iter_list_elements(&self) -> Self::ListIterator<'_> {
+        self.elements.iter()
+    }
+
+    fn is_tuple(&self) -> bool {
+        self.rows() <= 1
+    }
+
+}
+
+impl ParsedTable {
+
+    /// Empty table.
+    pub fn empty(at: Position) -> Self {
+        ParsedTable { elements: vec![], from: at, to: at, columns: 0 }
+    }
+
+}
+
+pub struct RowIterator<'a> {
+    columns: usize,
+    iter: Iter<'a, ParsedExpression>,
+}
+
+impl <'a> Iterator for RowIterator<'a> {
+
+    type Item = Box<[&'a ParsedExpression]>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut row = vec![];
+        let mut c = 0;
+        while c < self.columns {
+            if let Some(entry) = self.iter.next() {
+                row.push(entry);
+                c += 1;
+            } else {
+                return None;
+            };
+        };
+        Some(row.into_boxed_slice())
+    }
+
+}
+
+//// Directive
+
+/// A parsed directive.
+#[derive(Clone)]
+pub struct ParsedDirective {
+    pub directive: Rc<str>,
+    pub attributes: Vec<(Rc<str>, ParsedExpression)>,
+    pub arguments: Vec<ParsedComponent>,
+    pub from: Position,
+    pub to: Position,
+}
+
+impl Directive<ParsedExpression, ParsedText, ParsedDictionary, ParsedTable, Self, ParsedComponent> for ParsedDirective {
+
+    type ArgumentIterator<'b> = Iter<'b, ParsedComponent>;
+
+    type AttributeIterator<'b> = AttributeIterator<'b>;
+
+    fn label(&self) -> &str {
+        &self.directive
+    }
+
+    fn length(&self) -> usize {
+        self.arguments.len()
+    }
+
+    fn has_attributes(&self) -> bool {
+        !self.attributes.is_empty()
+    }
+
+    fn has_arguments(&self) -> bool {
+        !self.arguments.is_empty()
+    }
+
+    fn get_argument(&self, index: usize) -> Option<&ParsedComponent> {
+        self.arguments.get(index)
+    }
+
+    fn get_attribute(&self, key: &str) -> Option<&ParsedExpression> {
+        for attribute in &self.attributes {
+            if key.eq(attribute.0.deref()) {
+                return Some(&attribute.1);
+            };
+        };
+        None
+    }
+
+    fn get_attribute_at(&self, index: usize) -> Option<(&str, &ParsedExpression)> {
+        if let Some(attribute) = self.attributes.get(index) {
+            Some((attribute.0.borrow(), &attribute.1))
+        } else {
+            None
+        }
+    }
+
+    fn iter_arguments(&self) -> Self::ArgumentIterator<'_> {
+        self.arguments.iter()
+    }
+
+    fn iter_attributes(&self) -> Self::AttributeIterator<'_> {
+        AttributeIterator { iter: self.attributes.iter() }
+    }
+
+}
+
+pub struct AttributeIterator<'a> {
+    iter: Iter<'a, (Rc<str>, ParsedExpression)>,
+}
+
+impl <'a> Iterator for AttributeIterator<'a> {
+
+    type Item = (&'a str, &'a ParsedExpression);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(attribute) = self.iter.next() {
+            Some((&attribute.0, &attribute.1))
+        } else {
+            None
+        }
+    }
+
+}
+
+impl ParsedDirective {
+
+    pub fn length(&self) -> usize {
+        self.arguments.len()
+    }
+
+    pub fn get(&self, index: usize) -> Option<&ParsedComponent> {
+        self.arguments.get(index)
+    }
+
+}
+
+//// Component
+
+#[derive(Clone)]
+pub enum ParsedComponent {
+    Empty(Position, Position),
+    Text(ParsedText),
+    Table(ParsedTable),
+    Dictionary(ParsedDictionary),
+    Directive(ParsedDirective),
+    Compound(Box<[ParsedComponent]>, Box<[bool]>, Position, Position),
+}
+
+impl ParsedComponent {
+
+    pub fn empty(from: Position, to: Position) -> Self {
+        ParsedComponent::Empty(from, to)
+    }
+
+    pub fn from_components(from: Position, to: Position, mut components: Vec<ParsedComponent>, whitespace: Vec<bool>) -> Self {
+        let len = components.len();
+        if len == 0 {
+            ParsedComponent::Empty(from, to)
+        } else if len == 1 {
+            components.pop().unwrap()
+        } else {
+            assert_eq!(len - 1, whitespace.len());
+            ParsedComponent::Compound(components.into_boxed_slice(), whitespace.into_boxed_slice(), from, to)
+        }
+    }
+
+}
+
+impl Component<ParsedExpression, ParsedText, ParsedDictionary, ParsedTable, ParsedDirective, ParsedComponent> for ParsedComponent {
+
+    fn as_expression(&self) -> &ParsedExpression {
+        ParsedExpression::ref_cast(self)
+    }
+
+    fn as_text(&self) -> Option<&ParsedText> {
+        if let ParsedComponent::Text(t) = self {
+            Some(t)
+        } else {
+            None
+        }
+    }
+
+    fn as_table(&self) -> Option<&ParsedTable> {
+        if let ParsedComponent::Table(t) = self {
+            Some(t)
+        } else {
+            None
+        }
+    }
+
+    fn as_dictionary(&self) -> Option<&ParsedDictionary> {
+        if let ParsedComponent::Dictionary(d) = self {
+            Some(d)
+        } else {
+            None
+        }
+    }
+
+    fn as_directive(&self) -> Option<&ParsedDirective> {
+        if let ParsedComponent::Directive(d) = self {
+            Some(d)
+        } else {
+            None
+        }
+    }
+
+    fn is_text(&self) -> bool {
+        matches!(self, ParsedComponent::Text(..))
+    }
+
+    fn is_table(&self) -> bool {
+        matches!(self, ParsedComponent::Table(..))
+    }
+
+    fn is_dictionary(&self) -> bool {
+        matches!(self, ParsedComponent::Dictionary(..))
+    }
+
+    fn is_directive(&self) -> bool {
+        matches!(self, ParsedComponent::Directive(..))
+    }
+
+}
+
+impl ParsedComponent {
+
+    pub fn from(&self) -> Position {
+        match self {
+            ParsedComponent::Empty(from, ..) => from,
+            ParsedComponent::Text(ParsedText { from, .. }) => from,
+            ParsedComponent::Table(ParsedTable { from, .. }) => from,
+            ParsedComponent::Dictionary(ParsedDictionary { from, .. }) => from,
+            ParsedComponent::Directive(ParsedDirective { from, .. }) => from,
+            ParsedComponent::Compound(_, _, from, _) => from,
+        }.clone()
+    }
+
+    pub fn to(&self) -> Position {
+        match self {
+            ParsedComponent::Empty(.., to) => to,
+            ParsedComponent::Text(ParsedText { to, .. }) => to,
+            ParsedComponent::Table(ParsedTable { to, .. }) => to,
+            ParsedComponent::Dictionary(ParsedDictionary { to, .. }) => to,
+            ParsedComponent::Directive(ParsedDirective { to, .. }) => to,
+            ParsedComponent::Compound(_, _, _, to) => to,
+        }.clone()
+    }
+
+    fn into_expression(self) -> ParsedExpression {
+        ParsedExpression(self)
+    }
+
+}
+
+impl From<ParsedExpression> for ParsedComponent {
+
+    fn from(component: ParsedExpression) -> Self {
+        component.0
+    }
+
+}
+
+impl From<ParsedText> for ParsedComponent {
+
+    fn from(text: ParsedText) -> Self {
+        ParsedComponent::Text(text)
+    }
+
+}
+
+impl From<ParsedTable> for ParsedComponent {
+
+    fn from(sequence: ParsedTable) -> Self {
+        ParsedComponent::Table(sequence)
+    }
+
+}
+
+impl From<ParsedDictionary> for ParsedComponent {
+
+    fn from(dictionary: ParsedDictionary) -> Self {
+        ParsedComponent::Dictionary(dictionary)
+    }
+
+}
+
+impl From<ParsedDirective> for ParsedComponent {
+
+    fn from(command: ParsedDirective) -> Self {
+        ParsedComponent::Directive(command)
+    }
+
+}
+
+//// Parsing result formatting
+
+#[derive(Clone, Copy)]
+pub enum TokenType {
+    Word, Quote,
+    Colon, Semicolon, Bar, Query, HashQuery, Diamond,
+    LeftBracket, RightBracket, HashRightBracket,
+    LeftSquare, RightSquare, HashRightSquare,
+    LeftAngle, LeftAnglePlus, LeftAngleMinus, RightAngle,
+    Whitespace, End,
+}
+
+impl Display for TokenType {
+
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TokenType::Word => write!(f, "Word"),
+            TokenType::Quote => write!(f, "Quote"),
+            TokenType::Colon => write!(f, ":"),
+            TokenType::Semicolon => write!(f, ";"),
+            TokenType::Bar => write!(f, "|"),
+            TokenType::Query => write!(f, "?"),
+            TokenType::HashQuery => write!(f, "#?"),
+            TokenType::Diamond => write!(f, "<>"),
+            TokenType::LeftBracket => write!(f, "{{"),
+            TokenType::RightBracket => write!(f, "}}"),
+            TokenType::HashRightBracket => write!(f, "#}}"),
+            TokenType::LeftSquare => write!(f, "["),
+            TokenType::RightSquare => write!(f, "]"),
+            TokenType::HashRightSquare => write!(f, "#]"),
+            TokenType::LeftAngle => write!(f, "<"),
+            TokenType::LeftAnglePlus => write!(f, "<+"),
+            TokenType::LeftAngleMinus => write!(f, "<-"),
+            TokenType::RightAngle => write!(f, ">"),
+            TokenType::Whitespace => write!(f, "Whitespace"),
+            TokenType::End => write!(f, "End"),
+        }
+    }
+
+}
+
+impl Token {
+
+    fn to_type(&self) -> TokenType {
+        match self {
+            Token::Word(..) => TokenType::Word,
+            Token::Quote(..) => TokenType::Quote,
+            Token::Colon(..) => TokenType::Colon,
+            Token::Semicolon(..) => TokenType::Semicolon,
+            Token::Bar(..) => TokenType::Bar,
+            Token::Query(..) => TokenType::Query,
+            Token::HashQuery(..) => TokenType::HashQuery,
+            Token::Diamond(..) => TokenType::Diamond,
+            Token::LeftBracket(..) => TokenType::LeftBracket,
+            Token::RightBracket(..) => TokenType::RightBracket,
+            Token::HashRightBracket(..) => TokenType::HashRightBracket,
+            Token::LeftSquare(..) => TokenType::LeftSquare,
+            Token::RightSquare(..) => TokenType::RightSquare,
+            Token::HashRightSquare(..) => TokenType::HashRightSquare,
+            Token::LeftAngle(..) => TokenType::LeftAngle,
+            Token::LeftAnglePlus(..) => TokenType::LeftAnglePlus,
+            Token::LeftAngleMinus(..) => TokenType::LeftAngleMinus,
+            Token::RightAngle(..) => TokenType::RightAngle,
+            Token::Whitespace(..) => TokenType::Whitespace,
+            Token::End(..) => TokenType::End,
+        }
+    }
+
+}
+
+pub enum ParseTask {
+    Expression, Dictionary, Table, Directive
 }

@@ -1,7 +1,5 @@
-//! UDL-based LaTeX preprocessor.
-
+//! LaTeX preprocessor.
 
 mod preprocess;
-
 
 pub use preprocess::*;

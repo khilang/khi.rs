@@ -1,3 +1,3 @@
-# udl-rs-html
+# xml.khi preprocessor
 
-**UDL**-based **HTML** preprocessor.
+**Khi**-based **XML/HTML** preprocessor.

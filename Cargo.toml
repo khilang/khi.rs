@@ -1,33 +1,41 @@
 [package]
-name = "udl"
-description = "Parser for UDL (Universal Data Language)"
-version = "0.3.1"
+name = "khi"
+description = "Khi parser & library"
+version = "0.4.0"
 authors = ["Torm"]
 edition = "2021"
-homepage = "https://github.com/Torm/udl-rs"
-repository = "https://github.com/Torm/udl-rs"
+rust-version = "1.65"
+homepage = "https://github.com/khilang/khi.rs"
+repository = "https://github.com/khilang/khi.rs"
 license = "MIT OR Apache-2.0"
 keywords = ["parser", "format", "serialization", "config"]
 categories = ["config", "parser-implementations"]
 
+[dependencies]
+ref-cast = "1.0.16"
+serde = "1.0.164"
+numtoa = "0.2.4"
+hex = "0.4.3"
 
 [features]
-default = ["common", "parse"]
-
+default = ["parse"]
+# Lexer and parser
 parse = []
-common = []
-
+# XML/HTML preprocessor
 html = ["parse"]
+# LaTeX preprocessor
 tex = ["parse"]
-
+# Serde serialization and deserialization
+#serde = []
+# Encoding and decoding Khi data structures
+#enc = []
 
 [[bin]]
-name = "udl-tex-cmd"
+name = "khi-tex-cmd"
 path = "src/tex/tex_command.rs"
 required-features = ["tex"]
 
-
 [[bin]]
-name = "udl-html-cmd"
+name = "khi-html-cmd"
 path = "src/html/html_command.rs"
 required-features = ["html"]

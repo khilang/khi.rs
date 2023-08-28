@@ -1,3 +1,3 @@
-# udl-rs-tex
+# tex.khi preprocessor
 
-**UDL**-based **LaTeX** preprocessor.
+**Khi**-based **LaTeX** preprocessor.

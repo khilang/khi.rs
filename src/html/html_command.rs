@@ -1,12 +1,10 @@
-//! A HTML preprocessor processing html.xdl input.
-
+//! Command binary for the XML/HTML-preprocessor.
 
 use std::env;
 use std::fs::File;
 use std::io::Read;
-use udl::html::{PreprocessorError, write_html};
-use udl::parse::{error_to_string, parse_expression_document, ParseError};
-
+use khi::html::{PreprocessorError, write_html};
+use khi::parse::{error_to_string, parse_expression_document};
 
 fn main() {
     match preprocess() {
@@ -14,7 +12,6 @@ fn main() {
         Err(e) => print!("{}\n\n", e),
     };
 }
-
 
 fn preprocess() -> Result<String, String> {
     let mut args = env::args();
@@ -28,8 +25,7 @@ fn preprocess() -> Result<String, String> {
             Ok(parse) => parse,
             Err(error) => return Err(error_to_string(&error)),
         };
-        print!("{}\n\n", &parse);
-        match write_html(&parse, true) {
+        match write_html(&parse) {
             Ok(o) => Ok(o),
             Err(e) => {
                 Err(match e {

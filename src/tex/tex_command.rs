@@ -1,12 +1,10 @@
-//! A LaTeX preprocessor processing UDL input.
-
+//! Command binary for the TeX-preprocessor.
 
 use std::env;
 use std::fs::File;
 use std::io::Read;
-use udl::parse::{error_to_string, parse_expression_document, ParseError};
-use udl::tex::{PreprocessorError, write_tex};
-
+use khi::parse::{error_to_string, parse_expression_document};
+use khi::tex::{PreprocessorError, write_tex};
 
 fn main() {
     match preprocess() {
@@ -14,7 +12,6 @@ fn main() {
         Err(e) => print!("{}\n\n", e),
     };
 }
-
 
 fn preprocess() -> Result<String, String> {
     let mut args = env::args();
@@ -28,15 +25,27 @@ fn preprocess() -> Result<String, String> {
             Ok(parse) => parse,
             Err(error) => return Err(error_to_string(&error)),
         };
-        print!("{}\n\n", parse);
+        //print!("{}\n\n", parse);
         let output = match write_tex(&parse) {
             Ok(o) => o,
             Err(e) => match e {
-                PreprocessorError::IllegalSequence(at) => {
+                PreprocessorError::IllegalTable(at) => {
                     format!("Illegal sequence at {}:{}.", at.line, at.column)
                 }
                 PreprocessorError::IllegalDictionary(at) => {
                     format!("Illegal dictionary at {}:{}.", at.line, at.column)
+                }
+                PreprocessorError::TabulateExpectedArg(at) => {
+                    format!("Expected tab arg at {}:{}.", at.line, at.column)
+                }
+                PreprocessorError::ZeroTable(at) => {
+                    format!("Table cannot be empty at {}:{}.", at.line, at.column)
+                }
+                PreprocessorError::UnknownCommand(at, directive) => {
+                    format!("Unknown command {} at {}:{}.", &directive, at.line, at.column)
+                }
+                PreprocessorError::MissingOptionalArgument(at) => {
+                    format!("Missing optional argument at {}:{}.", at.line, at.column)
                 }
             },
         };

@@ -1,155 +1,270 @@
-//! Generation of TeX from UDL.
-
-
-// todo: insert reserved and special TeX characters correctly.
 // '%' must be inserted as "\%". % indicates a TeX comment.
+// '$' => '\$'
 // '^' must be inserted as "\^". ^ is the superscript operator in math mode, and reserved in text mode.
 // '_' must be inserted as "\_". _ is the subscript operator in math mode, and reserved in text mode.
 // '&' must be inserted as "\&". & is the tabulation operator.
 // '#' must be inserted as "\#". # is the argument substitution operator.
 // '\' must be inserted as "\textbackslash" in text and "\backslash" or "\setminus" in math. "\\" indicates a line break.
 
-
-use crate::ast::{ParsedArgument, ParsedDirective, ParsedExpression};
+use std::ops::Deref;
 use crate::lex::Position;
-use crate::tex::preprocess::PreprocessorError::{IllegalDictionary, IllegalSequence};
+use crate::parse::{ParsedComponent, ParsedDirective, ParsedExpression, ParsedTable};
+use crate::{Component, Directive, Expression, Table, Text, WhitespaceOption};
+use crate::tex::preprocess::PreprocessorError::{IllegalDictionary, IllegalTable};
 
-
-pub fn write_tex(expression: &ParsedExpression) -> Result<String, PreprocessorError> {
+pub fn write_tex(structure: &ParsedExpression) -> Result<String, PreprocessorError> {
     let mut output = String::new();
-    write_tex_inner(expression, &mut output, 0)?;
+    let mut writer = Writer { output: &mut output, column: 1, newline: 60, last: LastType::Whitespace };
+    writer.write_tex_inner(structure)?;
     Ok(output)
 }
 
+pub struct Writer<'a> {
+    output: &'a mut String,
+    column: usize,
+    // 0 for never newline.
+    newline: usize,
+    last: LastType,
+}
 
-fn write_tex_inner(expression: &ParsedExpression, output: &mut String, level: u32) -> Result<(), PreprocessorError> {
-    let mut iter = expression.iter();
-    //let mut last_is_text = false; // If text was pushed last, as opposed to a grouping. Used to insert spaces at correct places.
-    loop {
-        if let Some(argument) = iter.next() {
-            let (argument, whitespace) = argument;
-            match argument {
-                ParsedArgument::Empty(..) => { }
-                ParsedArgument::Text(text) => {
-                    output.push('\n');
-                    push_indent(output, level);
-                    output.push_str(&text.text);
-                }
-                ParsedArgument::Sequence(sequence) => {
-                    return Err(IllegalSequence(sequence.from));
-                }
-                ParsedArgument::Dictionary(dictionary) => {
-                    return Err(IllegalDictionary(dictionary.from));
-                }
-                ParsedArgument::Command(command) => {
-                    write_macro(command, output, level)?;
-                }
-                compound => {
-                    write_tex_inner(compound, output, level)?;
-                }
+#[derive(Eq, PartialEq)]
+enum LastType {
+    Whitespace,
+    Glyph,
+    Caret,
+    Underscore,
+}
+
+impl <'a> Writer<'a> {
+
+    fn push(&mut self, char: char) {
+        if char.is_whitespace() {
+            if self.last == LastType::Caret || self.last == LastType::Underscore {
+
+            } else {
+                if self.last != LastType::Whitespace {
+                    if self.newline == 0 || self.column < self.newline {
+                        self.output.push(' ');
+                    } else {
+                        self.output.push('\n');
+                        self.column = 1;
+                    };
+                    self.last = LastType::Whitespace;
+                    self.column += 1;
+                };
             }
+        } else if char == '^' {
+            self.output.push('^');
+            self.last = LastType::Caret;
+            self.column += 1;
+        } else if char == '_' {
+            self.output.push('_');
+            self.last = LastType::Underscore;
+            self.column += 1;
         } else {
-            return Ok(());
+            self.output.push(char);
+            self.last = LastType::Glyph;
+            self.column += 1;
+        };
+    }
+
+    fn push_str(&mut self, str: &str) {
+        for c in str.chars() {
+            if c == '$' {
+                self.output.push('\\');
+                self.output.push('$');
+                self.last = LastType::Glyph;
+                self.column += 2;
+            } else if c == '%' {
+                self.output.push('\\');
+                self.output.push('%');
+                self.last = LastType::Glyph;
+                self.column += 2;
+            } else if c == '&' {
+                self.output.push('\\');
+                self.output.push('&');
+                self.last = LastType::Glyph;
+                self.column += 2;
+            } else {
+                self.push(c);
+            }
         }
     }
-}
 
-
-fn write_macro(command: &ParsedDirective, output: &mut String, level: u32) -> Result<(), PreprocessorError> {
-    let name = &command.directive;
-    if name.starts_with('@') {
-        return Ok(());
-    } else if name.eq("$") {
-        output.push('$');
-        let argument = command.arguments.get(0).unwrap();
-        write_tex_inner(argument, output, level)?;
-        output.push('$');
-        return Ok(());
-    } else if name.eq("@tabulate-sq") {
-        let dim = command.arguments.get(0).unwrap();
-
-    } else if name.eq("\\") {
-        output.push_str("\n\\\\");
-        return Ok(());
-    }
-    output.push('\n');
-    push_indent(output, level);
-    output.push('\\');
-    output.push_str(name);
-    let mut arguments = command.arguments.iter();
-    let mut nextopt = false;
-    loop {
-        if let Some(argument) = arguments.next() {
-            match argument {
-                ParsedExpression::Empty(..) => {
-                    if nextopt {
-                        output.push_str("[]");
-                        nextopt = false;
+    fn write_tex_inner(&mut self, expression: &ParsedExpression) -> Result<(), PreprocessorError> {
+        for component in expression.iter_components_with_whitespace() {
+            match component {
+                WhitespaceOption::Component(ParsedComponent::Empty(..)) => {
+                    self.push('{');
+                    self.push('}');
+                }
+                WhitespaceOption::Component(ParsedComponent::Text(text)) => {
+                    if self.last == LastType::Caret || self.last == LastType::Underscore {
+                        self.push('{');
+                        self.push_str(text.as_str());
+                        self.push('}');
                     } else {
-                        output.push_str("{}");
+                        self.push_str(text.as_str());
                     }
+
                 }
-                ParsedExpression::Text(text) => {
-                    if text.text.eq("*") {
-                        nextopt = true;
-                        continue;
-                    }
-                    if nextopt {
-                        output.push('[');
-                        output.push_str(&text.text);
-                        output.push(']');
-                        nextopt = false;
-                        continue;
-                    } else {
-                        output.push('{');
-                        output.push_str(&text.text);
-                        output.push('}');
-                    }
+                WhitespaceOption::Component(ParsedComponent::Table(table)) => {
+                    self.write_tabulation(&table)?;
                 }
-                ParsedExpression::Sequence(sequence) => {
-                    return Err(IllegalSequence(sequence.from));
-                }
-                ParsedExpression::Dictionary(dictionary) => {
+                WhitespaceOption::Component(ParsedComponent::Dictionary(dictionary)) => {
                     return Err(IllegalDictionary(dictionary.from));
                 }
-                ParsedExpression::Command(command) => {
-                    output.push('{');
-                    write_macro(command, output, level + 1)?;
-                    output.push('}');
+                WhitespaceOption::Component(ParsedComponent::Directive(command)) => {
+                    self.write_macro(&command)?;
                 }
-                compound => {
-                    output.push_str("{\n");
-                    write_tex_inner(compound, output, level + 1)?;
-                    output.push('\n');
-                    push_indent(output, level);
-                    output.push('}');
+                WhitespaceOption::Component(compound) => {
+                    if self.last == LastType::Caret || self.last == LastType::Underscore {
+                        self.push('{');
+                        self.write_tex_inner(compound.as_expression())?;
+                        self.push('}');
+                    } else {
+                        self.write_tex_inner(compound.as_expression())?;
+                    }
+
+                }
+                WhitespaceOption::Whitespace => {
+                    self.push(' ');
                 }
             }
-        } else {
-            break;
         };
-    };
-    Ok(())
-}
-
-
-fn push_indent(output: &mut String, level: u32) {
-    let mut i = 0;
-    while i < level {
-        output.push(' ');
-        i += 1;
+        Ok(())
     }
+
+    fn write_tabulation(&mut self, table: &ParsedTable) -> Result<(), PreprocessorError> {
+        if table.columns == 0 {
+            return Err(PreprocessorError::ZeroTable(table.from))
+        };
+        for row in table.iter_rows() {
+            let mut columns = row.iter();
+            if let Some(c) = columns.next() {
+                self.write_tex_inner(c)?;
+            };
+            while let Some(c) = columns.next() {
+                self.push('&');
+                self.write_tex_inner(c)?;
+            };
+            self.push('\\');
+            self.push('\\');
+        };
+        Ok(())
+    }
+
+    fn write_macro(&mut self, directive: &ParsedDirective) -> Result<(), PreprocessorError> {
+        let command = &directive.directive;
+        if command.deref().eq("$") {
+            self.push('$');
+            let structure = directive.arguments.get(0).unwrap().as_expression();
+            self.write_tex_inner(structure)?;
+            self.push('$');
+        } else if command.deref().eq("@diag") {
+
+        } else if command.ends_with('!') {
+            return Err(PreprocessorError::UnknownCommand(directive.from, String::from(command.deref().deref())));
+        } else if command.deref().eq("p") {
+            self.push_str("\n\n");
+        } else if command.deref().eq("n") {
+            self.push_str("\\\\");
+        } else if command.deref().eq("\\") {
+            self.push_str("\n\\\\");
+        } else if command.deref().eq("@def") {
+            if directive.length() != 3 {
+                panic!()
+            }
+            let defined = directive.get(0).unwrap().as_directive().unwrap();
+            let args = directive.get(1).unwrap().as_expression();
+            let arg = directive.get(2).unwrap().as_expression();
+            self.output.push_str("\\newcommand");
+            self.output.push('{');
+            self.output.push('\\');
+            self.output.push_str(defined.directive.deref());
+            self.output.push('}');
+            self.output.push('[');
+            self.write_tex_inner(args)?;
+            self.output.push(']');
+            self.output.push('{');
+            self.write_tex_inner(arg)?;
+            self.output.push('}');
+        } else {
+            // Regular command.
+            self.push('\\');
+            self.push_str(command);
+            let mut arguments = directive.iter_arguments();
+            if command.ends_with("'") {
+                if let Some(argument) = arguments.next() {
+                    match argument {
+                        ParsedComponent::Empty(_, _) => {
+                            self.push_str("[]");
+                        }
+                        ParsedComponent::Text(text) => {
+                            self.push('[');
+                            self.push_str(&text.as_str());
+                            self.push(']');
+                        }
+                        ParsedComponent::Table(table) => {
+                            return Err(IllegalTable(table.from));
+                        }
+                        ParsedComponent::Dictionary(dictionary) => {
+                            return Err(IllegalDictionary(dictionary.from));
+                        }
+                        ParsedComponent::Directive(directive) => {
+                            self.push('{');
+                            self.write_macro(directive)?;
+                            self.push('}');
+                        }
+                        compound => {
+                            self.push('{');
+                            self.write_tex_inner(compound.as_expression())?;
+                            self.push('}');
+                        }
+                    }
+                } else {
+                    return Err(PreprocessorError::MissingOptionalArgument(directive.from))
+                }
+            }
+            while let Some(argument) = arguments.next() {
+                match argument {
+                    ParsedComponent::Empty(..) => {
+                        self.push_str("{}");
+                    }
+                    ParsedComponent::Text(text) => {
+                        self.push('{');
+                        self.push_str(&text.str.deref());
+                        self.push('}');
+                    }
+                    ParsedComponent::Table(sequence) => {
+                        return Err(IllegalTable(sequence.from));
+                    }
+                    ParsedComponent::Dictionary(dictionary) => {
+                        return Err(IllegalDictionary(dictionary.from));
+                    }
+                    ParsedComponent::Directive(command) => {
+                        self.push('{');
+                        self.write_macro(command)?;
+                        self.push('}');
+                    }
+                    compound => {
+                        self.push('{');
+                        self.write_tex_inner(compound.as_expression())?;
+                        self.push('}');
+                    }
+                }
+            }
+        };
+        Ok(())
+    }
+
 }
-
-
-pub enum LastState {
-    Whitespace,
-    Underscore,
-    Caret,
-}
-
 
 pub enum PreprocessorError {
-    IllegalSequence(Position),
+    IllegalTable(Position),
     IllegalDictionary(Position),
+    TabulateExpectedArg(Position),
+    ZeroTable(Position),
+    UnknownCommand(Position, String),
+    MissingOptionalArgument(Position),
 }
