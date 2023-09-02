@@ -163,22 +163,33 @@ fn test_tables() {
     // Test valid sequential notation.
     assert_table("", 0, 0);
     assert_table("1", 1, 1);
+    assert_table(":", 1, 1);
     assert_table("1;", 1, 1);
+    assert_table(":;", 1, 1);
     assert_table("1|0", 1, 2);
+    assert_table(":|:", 1, 2);
     assert_table("1|0;", 1, 2);
     assert_table("1;0", 2, 1);
+    assert_table(":;:", 2, 1);
     assert_table("1;0;", 2, 1);
     assert_table("1|0;0|1", 2, 2);
     assert_table("1|0|0;0|1|0;0|0|1", 3, 3);
+    assert_table("1|:|:;:|1|:;:|:|1", 3, 3);
+    assert_table(":|:|:;:|:|:;:|:|:", 3, 3);
     // Test invalid sequential notation.
     assert_invalid_table("1|0; ;");
     assert_invalid_table(";1|0;");
     assert_invalid_table("1|0|");
+    assert_invalid_table("1|:|");
     assert_invalid_table("1| |0");
     // Test valid tabular notation.
     assert_table("|1|", 1, 1);
+    assert_table("|:|", 1, 1);
     assert_table("|1|1|", 1, 2);
+    assert_table("|:|:|", 1, 2);
     assert_table("|1|0| |0|1|", 2, 2);
+    assert_table("|:|:| |:|:|", 2, 2);
+    assert_table("|1|:| |:|1|", 2, 2);
     assert_table("|1| |1|", 2, 1);
     assert_table("|1|0|0| |0|1|0| |0|0|1|", 3, 3);
     // Test invalid tabular notation.
@@ -189,6 +200,7 @@ fn test_tables() {
     assert_invalid_table("|a|b|c| | |d|e|f");
     assert_invalid_table("|a|b|c| |d|e|");
     assert_invalid_table("|a|b| |d|e|f|");
+    assert_invalid_table("|a|b| |:|e|f|");
 }
 
 fn assert_table(source: &str, rows: usize, columns: usize) {

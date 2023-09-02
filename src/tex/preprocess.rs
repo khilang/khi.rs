@@ -155,23 +155,23 @@ impl <'a> Writer<'a> {
     }
 
     fn write_macro(&mut self, directive: &ParsedDirective) -> Result<(), PreprocessorError> {
-        let command = &directive.directive;
-        if command.deref().eq("$") {
+        let mut command = directive.directive.deref();
+        if command.eq("$") {
             self.push('$');
             let structure = directive.arguments.get(0).unwrap().as_expression();
             self.write_tex_inner(structure)?;
             self.push('$');
-        } else if command.deref().eq("@diag") {
+        } else if command.eq("@diag") {
 
         } else if command.ends_with('!') {
-            return Err(PreprocessorError::UnknownCommand(directive.from, String::from(command.deref().deref())));
-        } else if command.deref().eq("p") {
+            return Err(PreprocessorError::UnknownCommand(directive.from, String::from(command)));
+        } else if command.eq("p") {
             self.push_str("\n\n");
-        } else if command.deref().eq("n") {
+        } else if command.eq("n") {
             self.push_str("\\\\");
-        } else if command.deref().eq("\\") {
+        } else if command.eq("\\") {
             self.push_str("\n\\\\");
-        } else if command.deref().eq("@def") {
+        } else if command.eq("@def") {
             if directive.length() != 3 {
                 panic!()
             }
@@ -191,10 +191,11 @@ impl <'a> Writer<'a> {
             self.output.push('}');
         } else {
             // Regular command.
-            self.push('\\');
-            self.push_str(command);
             let mut arguments = directive.iter_arguments();
             if command.ends_with("'") {
+                command = &command[0..command.len() - 1];
+                self.push('\\');
+                self.push_str(command);
                 if let Some(argument) = arguments.next() {
                     match argument {
                         ParsedComponent::Empty(_, _) => {
@@ -225,6 +226,9 @@ impl <'a> Writer<'a> {
                 } else {
                     return Err(PreprocessorError::MissingOptionalArgument(directive.from))
                 }
+            } else {
+                self.push('\\');
+                self.push_str(command);
             }
             while let Some(argument) = arguments.next() {
                 match argument {
@@ -263,7 +267,6 @@ impl <'a> Writer<'a> {
 pub enum PreprocessorError {
     IllegalTable(Position),
     IllegalDictionary(Position),
-    TabulateExpectedArg(Position),
     ZeroTable(Position),
     UnknownCommand(Position, String),
     MissingOptionalArgument(Position),

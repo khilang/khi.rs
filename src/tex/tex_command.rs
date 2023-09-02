@@ -35,9 +35,6 @@ fn preprocess() -> Result<String, String> {
                 PreprocessorError::IllegalDictionary(at) => {
                     format!("Illegal dictionary at {}:{}.", at.line, at.column)
                 }
-                PreprocessorError::TabulateExpectedArg(at) => {
-                    format!("Expected tab arg at {}:{}.", at.line, at.column)
-                }
                 PreprocessorError::ZeroTable(at) => {
                     format!("Table cannot be empty at {}:{}.", at.line, at.column)
                 }
