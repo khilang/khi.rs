@@ -182,6 +182,16 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
                         let at = iter.position();
                         iter.next_two();
                         tokens.push(Token::LeftAngleMinus(at));
+                    } else if d == '#' {
+                        let at = iter.position();
+                        iter.next_two();
+                        if let Some('>') = iter.c { // todo: allow labels
+                            iter.next();
+                            let quote = lex_multiline_quote(&mut iter, at)?;
+                            tokens.push(quote);
+                        } else {
+                            return Err(LexError::InvalidHashSequence(at));
+                        };
                     } else {
                         let at = iter.position();
                         iter.next();
@@ -413,4 +423,104 @@ fn lex_quote<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token
     };
     iter.next();
     Ok(Token::Quote(at, string))
+}
+
+/// Lex a multiline quote. // todo: Fix spaghetti
+fn lex_multiline_quote<It: Iterator<Item = char>>(iter: &mut CharIter<It>, at: Position) -> Result<Token, LexError> {
+    loop { // Ignore the line after the quote opening, unless there are glyphs there.
+        if let Some(c) = iter.c {
+            if c == '\n' {
+                iter.next();
+                break;
+            } else if c.is_whitespace() {
+                iter.next();
+            } else {
+                break;
+            };
+        } else {
+            return Err(LexError::UnclosedQuote(iter.position()));
+        };
+    };
+    let mut read = true;
+    let mut lines = vec![];
+    let mut least_indentation = usize::MAX;
+    'a: while read {
+        loop { // Skip whitespace at start of line.
+            if let Some(c) = iter.c {
+                if c == '\n' {
+                    iter.next();
+                    lines.push((String::new(), 0));
+                    continue 'a;
+                } else if c.is_whitespace() {
+                    iter.next();
+                } else {
+                    break;
+                };
+            } else {
+                return Err(LexError::UnclosedQuote(iter.position()));
+            };
+        };
+        let indentation = iter.column;
+        let mut line = String::new();
+        loop {
+            if let Some(c) = iter.c {
+                if c == '\n' {
+                    iter.next();
+                    break;
+                } else if c == '<' {
+                    iter.next();
+                    if let Some(c) = iter.c {
+                        if c == '#' {
+                            iter.next();
+                            if let Some(c) = iter.c {
+                                if c == '>' {
+                                    iter.next();
+                                    read = false;
+                                    break;
+                                } else {
+                                    line.push('<');
+                                    line.push('#');
+                                };
+                            } else {
+                                return Err(LexError::UnclosedQuote(iter.position()));
+                            };
+                        } else {
+                            line.push('<');
+                        };
+                    } else {
+                        return Err(LexError::UnclosedQuote(iter.position()));
+                    };
+                } else {
+                    iter.next();
+                    line.push(c);
+                };
+            } else {
+                return Err(LexError::UnclosedQuote(iter.position()));
+            };
+        };
+        if line.is_empty() {
+            if read {
+                lines.push((line, 0));
+            }
+        } else {
+            if indentation < least_indentation {
+                least_indentation = indentation;
+            };
+            lines.push((line, indentation));
+        };
+    };
+    let mut quote = String::new();
+    for (l, i) in lines {
+        if i == 0 { // Empty line.
+            quote.push('\n');
+            continue;
+        } else {
+            for _ in 0..(i - least_indentation) {
+                quote.push(' ');
+            };
+            quote.push_str(&l);
+            quote.push('\n');
+        };
+    };
+    Ok(Token::Quote(at, quote))
 }

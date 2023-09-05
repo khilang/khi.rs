@@ -104,6 +104,17 @@ impl XmlWriter<'_> {
                 }
                 self.push_str_non_breaking("<!DOCTYPE html>");
                 Ok(())
+            } else if name.deref() == "@raw" {
+                if let Some(arg) = command.get(0) {
+                    if let Some(text) = arg.as_text() {
+                        self.output.push_str(text.as_str());
+                        Ok(())
+                    } else {
+                        Err(PreprocessorError::Custom(format!("@raw can only take a text argument.")))
+                    }
+                } else {
+                    Err(PreprocessorError::Custom(format!("@raw must have one text argument.")))
+                }
             } else {
                 Err(PreprocessorError::Custom(format!("Unknown macro {}.", name)))
             };

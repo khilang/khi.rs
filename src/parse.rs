@@ -812,8 +812,8 @@ fn parse_table_component(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -
 ///
 /// ```text
 /// # Command
-/// <cmd> = "<" <word> ">"
-///       | "<" <word> <attr> ">"
+/// <cmd> = "<"<word> ">"
+///       | "<"<word> <attr> ">"
 /// ```
 fn parse_command(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<(String, Vec<(Rc<str>, ParsedExpression)>)> {
     if !matches!(iter.t, Token::LeftAngle(..)) {
@@ -825,7 +825,6 @@ fn parse_command(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result
 
 /// Parse the remainder of a command.
 fn parse_directive_tail(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<(String, Vec<(Rc<str>, ParsedExpression)>)> {
-    iter.skip_whitespace();
     if !matches!(iter.t, Token::Word(..) | Token::Query(..) | Token::HashQuery(..)) {
         return iter.expectation_error(&[TokenType::Word, TokenType::Query, TokenType::HashQuery]);
     };
@@ -1010,12 +1009,11 @@ fn parse_command_expression(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>
 ///            | <opening-tag><open-tag-arg><expr-tail-no-text> <closing-tag>
 ///
 /// # Opening tag
-/// <opening-tag> = "<+" <word> ">"
-///               | "<+" <word>_<attr> ">"
+/// <opening-tag> = "<+"<word> ">"
+///               | "<+"<word>_<attr> ">"
 ///
 /// # Closing tag
-/// <closing-tag> = "<-" ">"
-///               | "<-" <word> ">"
+/// <closing-tag> = "<-"<word> ">" # Includes "<-""?" ">" which closes any tag.
 ///
 /// # Tag argument
 /// # A sequence of tag arguments that end with a word.
@@ -1080,14 +1078,18 @@ fn parse_tag_expression(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) ->
         return iter.expectation_error(&[TokenType::LeftAngleMinus]);
     };
     iter.next();
-    iter.skip_whitespace();
-    if matches!(iter.t, Token::Word(..) | Token::Query(..) | Token::HashQuery(..)) {
+    if !matches!(iter.t, Token::Word(..) | Token::Query(..) | Token::HashQuery(..)) {
+        return iter.expectation_error(&[TokenType::Word, TokenType::Query, TokenType::HashQuery]);
+    };
+    if matches!(iter.t, Token::Query(..)) && !matches!(iter.t2, Token::Word(..) | Token::Query(..) | Token::HashQuery(..)) {
+        iter.next();
+    } else {
         let (closing_directive, closing_at, ..) = parse_word(iter, strings)?;
         if !closing_directive.eq(directive.deref()) {
             return Err(ParseError::MismatchedClosingTag(from, String::from(directive.deref()), closing_at, String::from(directive.deref())));
         };
-        iter.skip_whitespace();
     };
+    iter.skip_whitespace();
     if !matches!(iter.t, Token::RightAngle(..)) {
         return iter.expectation_error(&[TokenType::RightAngle]);
     };

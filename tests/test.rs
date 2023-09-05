@@ -1,5 +1,5 @@
 use khi::parse::{parse_dictionary_document, parse_expression_document, parse_table_document, ParsedComponent, ParsedExpression};
-use khi::{Component, Expression, Table, WhitespaceOption};
+use khi::{Component, Expression, Table, Text, WhitespaceOption};
 
 #[test]
 pub fn test_lexer() {
@@ -80,7 +80,7 @@ pub fn test_composition() {
 
 #[test]
 pub fn test_tags() {
-    let source = "<+$><+Sum>:k:1:n?3k^2 - 2k<-><->";
+    let source = "<+$><+Sum>:k:1:n?3k^2 - 2k<-?><-?>";
     let dir1 = parse_expression_document(source).unwrap();
     assert_eq!(dir1.length(), 1);
     assert!(dir1.is_directive());
@@ -213,6 +213,29 @@ fn assert_table(source: &str, rows: usize, columns: usize) {
 fn assert_invalid_table(source: &str) {
     let table = parse_table_document(source);
     assert!(table.is_err());
+}
+
+#[test]
+fn test_multiline_quote() {
+    let eq = "def main():\n  print(\"Hello world\")\nmain()\n";
+    // Test indentation.
+    let src = "<#>\n  def main():\n    print(\"Hello world\")\n  main()\n<#>";
+    assert_string(src, eq);
+    // Equal increase in indentation.
+    let src = "<#>\n    def main():\n      print(\"Hello world\")\n    main()\n<#>";
+    assert_string(src, eq);
+    // Start immediately after <#>.
+    let src = "<#>def main():\n     print(\"Hello world\")\n   main()\n<#>";
+    assert_string(src, eq);
+    // Remove newline before <#>.
+    let src = "<#>def main():\n     print(\"Hello world\")\n   main()<#>";
+    assert_string(src, eq);
+}
+
+fn assert_string(src: &str, eq: &str) {
+    let expression = parse_expression_document(src).unwrap();
+    let str = expression.get(0).unwrap().as_text().unwrap().as_str();
+    assert_eq!(str, eq);
 }
 
 #[test]
