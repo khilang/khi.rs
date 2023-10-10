@@ -29,7 +29,7 @@ pub fn test_lexer() {
 }
 
 #[test]
-pub fn test_arguments() {
+pub fn test_components() {
     let source = "A text argument";
     let document = parse_expression_document(source).unwrap();
     assert_eq!(document.length(), 1);
@@ -76,21 +76,6 @@ pub fn test_composition() {
     assert!(dir2arg.is_directive());
     let dir3 = dir2arg.as_directive().unwrap();
     assert_eq!(dir3.length(), 1);
-}
-
-#[test]
-pub fn test_tags() {
-    let source = "<+$><+Sum>:k:1:n?3k^2 - 2k<-?><-?>";
-    let dir1 = parse_expression_document(source).unwrap();
-    assert_eq!(dir1.length(), 1);
-    assert!(dir1.is_directive());
-    let dir1 = dir1.conform_directive().unwrap();
-    assert_eq!(dir1.length(), 1);
-    let expr2 = dir1.arguments.get(0).unwrap();
-    assert_eq!(expr2.as_expression().length(), 1);
-    assert!(expr2.is_directive());
-    let dir2 = expr2.as_directive().unwrap();
-    assert_eq!(dir2.length(), 4);
 }
 
 #[test]

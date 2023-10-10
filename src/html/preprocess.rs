@@ -99,10 +99,13 @@ impl XmlWriter<'_> {
         // Macro // todo: set up arbitrary macro names.
         if name.starts_with('@') {
             return if name.deref() == "@doctype" {
-                if !command.attributes.is_empty() || !command.arguments.is_empty() {
-                    return Err(PreprocessorError::Custom(format!("@doctype macro cannot have attributes nor arguments.")))
+                if !command.attributes.is_empty() || command.arguments.len() != 1 {
+                    return Err(PreprocessorError::Custom(format!("@doctype macro cannot have attributes and must have 1 argument.")))
                 }
-                self.push_str_non_breaking("<!DOCTYPE html>");
+                let arg = command.arguments.get(0).unwrap();
+                self.push_str_non_breaking("<!DOCTYPE ");
+                self.push_str_non_breaking(arg.as_text().unwrap().as_str());
+                self.push_str_non_breaking(">");
                 Ok(())
             } else if name.deref() == "@raw" {
                 if let Some(arg) = command.get(0) {

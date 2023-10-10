@@ -19,10 +19,6 @@ pub enum Token {
     Semicolon(Position),
     /// A `|` token.
     Bar(Position),
-    /// A `?` token.
-    Query(Position),
-    /// A `#?` token.
-    HashQuery(Position),
     Diamond(Position),
     LeftBracket(Position),
     RightBracket(Position),
@@ -31,8 +27,6 @@ pub enum Token {
     RightSquare(Position),
     HashRightSquare(Position),
     LeftAngle(Position),
-    LeftAnglePlus(Position),
-    LeftAngleMinus(Position),
     RightAngle(Position),
     /// A sequence of whitespace.
     Whitespace(Position),
@@ -48,8 +42,6 @@ impl Token {
             Token::Colon(at) => *at,
             Token::Semicolon(at) => *at,
             Token::Bar(at) => *at,
-            Token::Query(at) => *at,
-            Token::HashQuery(at) => *at,
             Token::Diamond(at) => *at,
             Token::LeftBracket(at) => *at,
             Token::RightBracket(at) => *at,
@@ -58,8 +50,6 @@ impl Token {
             Token::RightSquare(at) => *at,
             Token::HashRightSquare(at) => *at,
             Token::LeftAngle(at) => *at,
-            Token::LeftAnglePlus(at) => *at,
-            Token::LeftAngleMinus(at) => *at,
             Token::RightAngle(at) => *at,
             Token::Whitespace(at) => *at,
             Token::End(at) => *at,
@@ -174,14 +164,6 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
                         let at = iter.position();
                         iter.next_two();
                         tokens.push(Token::Diamond(at));
-                    } else if d == '+' { // <+
-                        let at = iter.position();
-                        iter.next_two();
-                        tokens.push(Token::LeftAnglePlus(at));
-                    } else if d == '-' { // <-
-                        let at = iter.position();
-                        iter.next_two();
-                        tokens.push(Token::LeftAngleMinus(at));
                     } else if d == '#' {
                         let at = iter.position();
                         iter.next_two();
@@ -241,10 +223,6 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
                     iter.next();
                     tokens.push(Token::Bar(at));
                 };
-            } else if c == '?' {
-                let at = iter.position();
-                iter.next();
-                tokens.push(Token::Query(at));
             } else if c == '#' {
                 if let Some(d) = iter.d {
                     if d == '#' || d.is_whitespace() { // Comment whitespace
@@ -258,10 +236,6 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
                         let at = iter.position();
                         iter.next_two();
                         tokens.push(Token::HashRightSquare(at));
-                    } else if d == '?' { // `#?`
-                        let at = iter.position();
-                        iter.next_two();
-                        tokens.push(Token::HashQuery(at));
                     } else if d == '{' || d == '[' || d == '<' || d == '>' || d == '"' || d == ':' || d == ';' || d == '|'  { // Illegal
                         let at = iter.position();
                         return Err(LexError::InvalidHashSequence(at));
@@ -367,7 +341,7 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
                 };
             } else if c == '#' {
                 if let Some(d) = iter.d {
-                    if d == '#' || d.is_whitespace() || d == '{' || d == '}' || d == '[' || d == ']' || d == '<' || d == '>' || d == '"' || d == ':' || d == ';' || d == '|' || d == '?' { // Comment, `#]`, `#}`, `#?` token or disallowed sequence.
+                    if d == '#' || d.is_whitespace() || d == '{' || d == '}' || d == '[' || d == ']' || d == '<' || d == '>' || d == '"' || d == ':' || d == ';' || d == '|' { // Comment, `#]`, `#}`, `#?` token or disallowed sequence.
                         break;
                     } else { // # before glyph
                         iter.next();
@@ -376,8 +350,6 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
                 } else {
                     break;
                 };
-            } else if c == '?' { // `?` token
-                break;
             } else if c.is_whitespace() { // Whitespace
                 break;
             } else { // Glyph
