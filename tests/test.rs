@@ -80,7 +80,7 @@ pub fn test_composition() {
 
 #[test]
 pub fn test_dictionary_1() {
-    let source = "{#}";
+    let source = "{}";
     let expr = parse_expression_document(source).unwrap();
     assert_eq!(expr.length(), 1);
     assert!(expr.is_dictionary());
@@ -100,7 +100,7 @@ pub fn test_dictionary_2() {
 
 #[test]
 pub fn test_dictionary_3() {
-    let source = "{ k1: v1; k2: v2; k3: v3; #}";
+    let source = "{ k1: v1; k2: v2; k3: v3; }";
     let expr = parse_expression_document(source).unwrap();
     assert_eq!(expr.length(), 1);
     assert!(expr.is_dictionary());
@@ -114,8 +114,8 @@ fn test_expression() {
     assert_expression("[1|0;0|1]", 1, "Tb");
     assert_expression("{k: v}", 1, "Dc");
     assert_expression("<Dir>", 1, "Dr");
-    assert_expression("{} {Text [Table]}", 2, "Em Cm");
-    assert_expression("{}", 0, "");
+    assert_expression("{~} {Text [Table]}", 2, "Em Cm");
+    assert_expression("{~}", 0, "");
     assert_expression("", 0, "");
     assert_expression("Text {Text} [Table] {k: v} <Dir>", 5, "Tx Tx Tb Dc Dr");
 }
@@ -144,37 +144,117 @@ fn textify_expression(expression: &ParsedExpression) -> String {
 }
 
 #[test]
+fn test_escape_sequences() {
+    assert_text("`{", "{");
+    assert_text("`}", "}");
+    assert_text("`[", "[");
+    assert_text("`]", "]");
+    assert_text("`<", "<");
+    assert_text("`>", ">");
+    assert_text("`\"", "\"");
+    assert_text("`:", ":");
+    assert_text("`;", ";");
+    assert_text("`|", "|");
+    assert_text("`~", "~");
+    assert_text("`#", "#");
+    assert_text("``", "`");
+    assert_text("`n", "\n");
+    // Invalid escapes
+    assert_invalid_expression("`a");
+    assert_invalid_expression("`1");
+}
+
+fn assert_text(source: &str, str: &str) {
+    let expr = parse_expression_document(source).unwrap();
+    assert!(expr.is_text());
+    let text = expr.conform_text().unwrap().as_str();
+    assert!(text.eq(str));
+}
+
+#[test]
+fn test_repeated_escape_sequences() {
+    assert_expression("::", 1, "Tx");
+    assert_expression(":::", 1, "Tx");
+    assert_expression(";;", 1, "Tx");
+    assert_expression(";;;", 1, "Tx");
+    assert_expression("||", 1, "Tx");
+    assert_expression("|||", 1, "Tx");
+    assert_expression("~~", 1, "Tx");
+    assert_expression("~~~", 1, "Tx");
+    assert_expression("<<", 1, "Tx");
+    assert_expression("<<<", 1, "Tx");
+    assert_expression(">>", 1, "Tx");
+    assert_expression(">>>", 1, "Tx");
+}
+
+#[test]
+fn test_hash() {
+    // Text
+    assert_expression("#a", 1, "Tx");
+    assert_expression("#1", 1, "Tx");
+    assert_expression("#?", 1, "Tx");
+    assert_expression("#`:", 1, "Tx");
+    assert_expression("A#B", 1, "Tx");
+    // Comments
+    assert_expression("##", 0, "");
+    assert_expression("# ", 0, "");
+    assert_expression("#", 0, "");
+    // Invalid sequence
+    assert_invalid_expression("#{");
+    assert_invalid_expression("#}");
+    assert_invalid_expression("#[");
+    assert_invalid_expression("#]");
+    assert_invalid_expression("#<");
+    assert_invalid_expression("#>");
+    assert_invalid_expression("#\"");
+    assert_invalid_expression("#:");
+    assert_invalid_expression("#;");
+    assert_invalid_expression("#|");
+    assert_invalid_expression("#~");
+}
+
+fn assert_invalid_expression(source: &str) {
+    assert!(parse_expression_document(source).is_err());
+}
+
+#[test]
 fn test_tables() {
+    // Test empty table
+    let expression = parse_expression_document("[]").unwrap();
+    assert_eq!(expression.length(), 1);
+    assert!(expression.is_table());
+    let table = expression.conform_table().unwrap();
+    assert!(table.is_empty());
     // Test valid sequential notation.
     assert_table("", 0, 0);
     assert_table("1", 1, 1);
-    assert_table(":", 1, 1);
+    assert_table("~", 1, 1);
     assert_table("1;", 1, 1);
-    assert_table(":;", 1, 1);
+    assert_table("~;", 1, 1);
     assert_table("1|0", 1, 2);
-    assert_table(":|:", 1, 2);
+    assert_table("~|~", 1, 2);
     assert_table("1|0;", 1, 2);
     assert_table("1;0", 2, 1);
-    assert_table(":;:", 2, 1);
+    assert_table("~;~", 2, 1);
     assert_table("1;0;", 2, 1);
     assert_table("1|0;0|1", 2, 2);
     assert_table("1|0|0;0|1|0;0|0|1", 3, 3);
-    assert_table("1|:|:;:|1|:;:|:|1", 3, 3);
-    assert_table(":|:|:;:|:|:;:|:|:", 3, 3);
+    assert_table("1|~|~;~|1|~;~|~|1", 3, 3);
+    assert_table("~|~|~;~|~|~;~|~|~", 3, 3);
     // Test invalid sequential notation.
     assert_invalid_table("1|0; ;");
     assert_invalid_table(";1|0;");
     assert_invalid_table("1|0|");
-    assert_invalid_table("1|:|");
+    assert_invalid_table("1|~|");
     assert_invalid_table("1| |0");
     // Test valid tabular notation.
     assert_table("|1|", 1, 1);
-    assert_table("|:|", 1, 1);
+    assert_table("|~|", 1, 1);
     assert_table("|1|1|", 1, 2);
-    assert_table("|:|:|", 1, 2);
+    assert_table("|~|~|", 1, 2);
     assert_table("|1|0| |0|1|", 2, 2);
-    assert_table("|:|:| |:|:|", 2, 2);
-    assert_table("|1|:| |:|1|", 2, 2);
+    assert_table("|~|~| |~|~|", 2, 2);
+    assert_table("|1|~| |~|1|", 2, 2);
     assert_table("|1| |1|", 2, 1);
     assert_table("|1|0|0| |0|1|0| |0|0|1|", 3, 3);
     // Test invalid tabular notation.
@@ -185,7 +265,7 @@ fn test_tables() {
     assert_invalid_table("|a|b|c| | |d|e|f");
     assert_invalid_table("|a|b|c| |d|e|");
     assert_invalid_table("|a|b| |d|e|f|");
-    assert_invalid_table("|a|b| |:|e|f|");
+    assert_invalid_table("|a|b| |~|e|f|");
 }
 
 fn assert_table(source: &str, rows: usize, columns: usize) {
@@ -224,14 +304,27 @@ fn assert_string(src: &str, eq: &str) {
 }
 
 #[test]
+fn test_component_separator() {
+    assert_expression("~", 0, "");
+    assert_expression("~ ~", 0, "");
+    assert_expression("A ~", 1, "Tx");
+    assert_expression("A ~ B", 2, "TxTx");
+    assert_expression("A ~ B ~ C", 3, "TxTxTx");
+    assert_expression("A~B~C", 3, "TxTxTx");
+    assert_expression("~A~B~ ~C~", 3, "TxTxTx");
+}
+
+#[test]
 fn test_dictionaries() {
     assert_dictionary("", 0);
     assert_dictionary("k:v", 1);
     assert_dictionary("k:v;", 1);
+    assert_dictionary("k:~", 1);
     assert_dictionary("k1:v1;k2:v2", 2);
     assert_dictionary("k1:v1;k2:v2;", 2);
-    assert_dictionary("k1;", 1);
-    assert_dictionary("k1;k2;", 2);
+    assert_dictionary("k1:~;k2:v2", 2);
+    assert_dictionary("k1:~;k2:~", 2);
+    assert_dictionary("k1:~;k2:~;", 2);
 }
 
 fn assert_dictionary(source: &str, size: usize) {

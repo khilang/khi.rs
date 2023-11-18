@@ -14,22 +14,21 @@ pub struct Position { pub index: usize, pub line: usize, pub column: usize }
 pub enum Token {
     /// A Word token.
     Word(Position, String),
+    /// A sequence of whitespace.
+    Whitespace(Position),
     Quote(Position, String),
     Colon(Position),
     Semicolon(Position),
     /// A `|` token.
     Bar(Position),
-    Diamond(Position),
+    Tilde(Position),
     LeftBracket(Position),
     RightBracket(Position),
-    HashRightBracket(Position),
     LeftSquare(Position),
     RightSquare(Position),
-    HashRightSquare(Position),
     LeftAngle(Position),
     RightAngle(Position),
-    /// A sequence of whitespace.
-    Whitespace(Position),
+    Diamond(Position),
     End(Position),
 }
 
@@ -42,13 +41,12 @@ impl Token {
             Token::Colon(at) => *at,
             Token::Semicolon(at) => *at,
             Token::Bar(at) => *at,
+            Token::Tilde(at) => *at,
             Token::Diamond(at) => *at,
             Token::LeftBracket(at) => *at,
             Token::RightBracket(at) => *at,
-            Token::HashRightBracket(at) => *at,
             Token::LeftSquare(at) => *at,
             Token::RightSquare(at) => *at,
-            Token::HashRightSquare(at) => *at,
             Token::LeftAngle(at) => *at,
             Token::RightAngle(at) => *at,
             Token::Whitespace(at) => *at,
@@ -156,15 +154,14 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
                 tokens.push(Token::RightSquare(at));
             } else if c == '<' {
                 if let Some(d) = iter.d {
-                    if d == '<' {
-                        // Text escape sequence <
+                    if d == '<' { // Repeated escape sequence
                         let token = lex_word(&mut iter)?;
                         tokens.push(token);
-                    } else if d == '>' { // Diamond <>
+                    } else if d == '>' { // Diamond
                         let at = iter.position();
                         iter.next_two();
                         tokens.push(Token::Diamond(at));
-                    } else if d == '#' {
+                    } else if d == '#' { // Multiline quote
                         let at = iter.position();
                         iter.next_two();
                         if let Some('>') = iter.c { // todo: allow labels
@@ -174,69 +171,70 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
                         } else {
                             return Err(LexError::InvalidHashSequence(at));
                         };
-                    } else {
+                    } else { // Left angle
                         let at = iter.position();
                         iter.next();
                         tokens.push(Token::LeftAngle(at));
                     };
-                } else {
+                } else { // Left angle
                     let at = iter.position();
                     iter.next();
                     tokens.push(Token::LeftAngle(at));
                 };
             } else if c == '>' {
-                if let Some('>') = iter.d {
+                if let Some('>') = iter.d { // Repeated escape sequence
                     let token = lex_word(&mut iter)?;
                     tokens.push(token);
-                } else {
+                } else { // Right angle
                     let at = iter.position();
                     iter.next();
                     tokens.push(Token::RightAngle(at));
                 };
-            } else if c == '"' {
+            } else if c == '"' { // Quote
                 let token = lex_quote(&mut iter)?;
                 tokens.push(token);
             } else if c == ':' {
-                if let Some(':') = iter.d {
+                if let Some(':') = iter.d { // Repeated escape sequence
                     let token = lex_word(&mut iter)?;
                     tokens.push(token);
-                } else {
+                } else { // Colon
                     let at = iter.position();
                     iter.next();
                     tokens.push(Token::Colon(at));
                 };
             } else if c == ';' {
-                if let Some(';') = iter.d {
+                if let Some(';') = iter.d { // Repeated escape sequence
                     let token = lex_word(&mut iter)?;
                     tokens.push(token);
-                } else {
+                } else { // Semicolon
                     let at = iter.position();
                     iter.next();
                     tokens.push(Token::Semicolon(at));
                 };
             } else if c == '|' {
-                if let Some('|') = iter.d {
+                if let Some('|') = iter.d { // Repeated escape sequence
                     let token = lex_word(&mut iter)?;
                     tokens.push(token);
-                } else {
+                } else { // Bar
                     let at = iter.position();
                     iter.next();
                     tokens.push(Token::Bar(at));
                 };
+            } else if c == '~' {
+                if let Some('~') = iter.d { // Repeated escape sequence
+                    let token = lex_word(&mut iter)?;
+                    tokens.push(token);
+                } else { // Tilde
+                    let at = iter.position();
+                    iter.next();
+                    tokens.push(Token::Tilde(at));
+                }
             } else if c == '#' {
                 if let Some(d) = iter.d {
                     if d == '#' || d.is_whitespace() { // Comment whitespace
                         let whitespace = lex_whitespace(&mut iter)?;
                         tokens.push(whitespace);
-                    } else if d == '}' { // `#}`
-                        let at = iter.position();
-                        iter.next_two();
-                        tokens.push(Token::HashRightBracket(at));
-                    } else if d == ']' { // `#]`
-                        let at = iter.position();
-                        iter.next_two();
-                        tokens.push(Token::HashRightSquare(at));
-                    } else if d == '{' || d == '[' || d == '<' || d == '>' || d == '"' || d == ':' || d == ';' || d == '|'  { // Illegal
+                    } else if d == '{' || d == '}' || d == '[' || d == ']' || d == '<' || d == '>' || d == '"' || d == ':' || d == ';' || d == '|' || d == '~' { // Illegal
                         let at = iter.position();
                         return Err(LexError::InvalidHashSequence(at));
                     } else { // `#<c>` or `` #` ``
@@ -267,7 +265,7 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
 
 /// Lex a whitespace sequence.
 ///
-/// Assumes that the current character is whitespace or a hash glyph opening a comment.
+/// Assumes that the current character is whitespace or a hash opening a comment.
 fn lex_whitespace<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token, LexError> {
     let at = iter.position();
     loop {
@@ -281,7 +279,8 @@ fn lex_whitespace<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<
                     } else {
                         break;
                     };
-                } else {
+                } else { // EOS
+                    iter.next();
                     break;
                 };
             } else {
@@ -304,7 +303,7 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
         if let Some(c) = iter.c {
             if c == '{' || c == '}' || c == '[' || c == ']' || c == '"' { // Reserved
                 break;
-            } else if c == '<' || c == '>' || c == ':' || c == ';' || c == '|' { // Maybe escape sequence, otherwise reserved
+            } else if c == '<' || c == '>' || c == ':' || c == '|' || c == ';' || c == '~' { // Maybe escape sequence, otherwise reserved
                 if let Some(d) = iter.d {
                     if d == c {
                         iter.next_two();
@@ -341,7 +340,7 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
                 };
             } else if c == '#' {
                 if let Some(d) = iter.d {
-                    if d == '#' || d.is_whitespace() || d == '{' || d == '}' || d == '[' || d == ']' || d == '<' || d == '>' || d == '"' || d == ':' || d == ';' || d == '|' { // Comment, `#]`, `#}`, `#?` token or disallowed sequence.
+                    if d == '#' || d.is_whitespace() || d == '{' || d == '}' || d == '[' || d == ']' || d == '<' || d == '>' || d == '"' || d == ':' || d == ';' || d == '|' || d == '~' { // Comment or disallowed sequence.
                         break;
                     } else { // # before glyph
                         iter.next();

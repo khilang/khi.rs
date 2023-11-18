@@ -8,7 +8,7 @@ pub enum SimpleStructure {
     Table(SimpleTable),
     Dictionary(SimpleDictionary),
     Directive(SimpleDirective),
-    Compound(Vec<SimpleComponent>)
+    Compound(Vec<SimpleComponent>),
 }
 
 impl Expression<SimpleText, SimpleTable, SimpleDictionary, SimpleDirective, SimpleComponent> for SimpleStructure {

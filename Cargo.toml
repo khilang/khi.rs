@@ -1,7 +1,7 @@
 [package]
 name = "khi"
 description = "Khi parser & library"
-version = "0.7.0"
+version = "0.8.0"
 authors = ["Torm"]
 edition = "2021"
 rust-version = "1.65"
@@ -12,8 +12,8 @@ keywords = ["parser", "format", "serialization", "config"]
 categories = ["config", "parser-implementations"]
 
 [dependencies]
-ref-cast = "1.0.16"
-serde = "1.0.164"
+ref-cast = "1.0.20"
+serde = "1.0.192"
 numtoa = "0.2.4"
 hex = "0.4.3"
 

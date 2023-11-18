@@ -7,7 +7,7 @@
 <html>:{
   <head>:{
     <title>:{Hello world!}
-    <script src:script.js>:{}
+    <script src:script.js>:{~} # {~} is an empty expression.
   }
   <body>:{
     <h1 id:main-heading>:{Hello world!}
