@@ -1,7 +1,7 @@
 [package]
 name = "khi"
 description = "Khi parser & library"
-version = "0.8.0"
+version = "0.9.0" # TODO
 authors = ["Torm"]
 edition = "2021"
 rust-version = "1.65"
@@ -32,10 +32,10 @@ tex = ["parse"]
 
 [[bin]]
 name = "khi-tex-cmd"
-path = "src/tex/tex_command.rs"
+path = "src/tex/command.rs"
 required-features = ["tex"]
 
 [[bin]]
 name = "khi-html-cmd"
-path = "src/html/html_command.rs"
+path = "src/html/command.rs"
 required-features = ["html"]

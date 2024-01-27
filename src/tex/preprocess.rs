@@ -8,11 +8,11 @@
 
 use std::ops::Deref;
 use crate::lex::Position;
-use crate::parse::{ParsedComponent, ParsedDirective, ParsedExpression, ParsedTable};
-use crate::{Component, Directive, Expression, Table, Text, WhitespaceOption};
+use crate::parse::{ParsedValue, ParsedPattern, ParsedTable};
+use crate::{Pattern, Table, Text, Element};
 use crate::tex::preprocess::PreprocessorError::{IllegalDictionary, IllegalTable};
 
-pub fn write_tex(structure: &ParsedExpression) -> Result<String, PreprocessorError> {
+pub fn write_tex(structure: &ParsedValue) -> Result<String, PreprocessorError> {
     let mut output = String::new();
     let mut writer = Writer { output: &mut output, column: 1, newline: 60, last: LastType::Whitespace };
     writer.write_tex_inner(structure)?;
@@ -91,14 +91,14 @@ impl <'a> Writer<'a> {
         }
     }
 
-    fn write_tex_inner(&mut self, expression: &ParsedExpression) -> Result<(), PreprocessorError> {
+    fn write_tex_inner(&mut self, expression: &ParsedValue) -> Result<(), PreprocessorError> {
         for component in expression.iter_components_with_whitespace() {
             match component {
-                WhitespaceOption::Component(ParsedComponent::Empty(..)) => {
+                Element::Substance(ParsedValue::Nil(..)) => {
                     self.push('{');
                     self.push('}');
                 }
-                WhitespaceOption::Component(ParsedComponent::Text(text)) => {
+                Element::Substance(ParsedValue::Text(text, ..)) => {
                     if self.last == LastType::Caret || self.last == LastType::Underscore {
                         self.push('{');
                         self.push_str(text.as_str());
@@ -108,16 +108,16 @@ impl <'a> Writer<'a> {
                     }
 
                 }
-                WhitespaceOption::Component(ParsedComponent::Table(table)) => {
-                    self.write_tabulation(&table)?;
+                Element::Substance(ParsedValue::Table(table, from, to)) => {
+                    self.write_tabulation(&table, *from)?;
                 }
-                WhitespaceOption::Component(ParsedComponent::Dictionary(dictionary)) => {
-                    return Err(IllegalDictionary(dictionary.from));
+                Element::Substance(ParsedValue::Dictionary(dictionary, from, to)) => {
+                    return Err(IllegalDictionary(*from));
                 }
-                WhitespaceOption::Component(ParsedComponent::Directive(command)) => {
-                    self.write_macro(&command)?;
+                Element::Substance(ParsedValue::Pattern(command, from, to)) => {
+                    self.write_macro(&command, *from)?;
                 }
-                WhitespaceOption::Component(compound) => {
+                Element::Substance(compound) => {
                     if self.last == LastType::Caret || self.last == LastType::Underscore {
                         self.push('{');
                         self.write_tex_inner(compound.as_expression())?;
@@ -127,7 +127,7 @@ impl <'a> Writer<'a> {
                     }
 
                 }
-                WhitespaceOption::Whitespace => {
+                Element::Whitespace => {
                     self.push(' ');
                 }
             }
@@ -135,9 +135,9 @@ impl <'a> Writer<'a> {
         Ok(())
     }
 
-    fn write_tabulation(&mut self, table: &ParsedTable) -> Result<(), PreprocessorError> {
+    fn write_tabulation(&mut self, table: &ParsedTable, at: Position) -> Result<(), PreprocessorError> {
         if table.columns == 0 {
-            return Err(PreprocessorError::ZeroTable(table.from))
+            return Err(PreprocessorError::ZeroTable(at))
         };
         for row in table.iter_rows() {
             let mut columns = row.iter();
@@ -154,34 +154,32 @@ impl <'a> Writer<'a> {
         Ok(())
     }
 
-    fn write_macro(&mut self, directive: &ParsedDirective) -> Result<(), PreprocessorError> {
-        let mut command = directive.directive.deref();
+    fn write_macro(&mut self, directive: &ParsedPattern, at: Position) -> Result<(), PreprocessorError> {
+        let mut command = directive.name.deref();
         if command.eq("$") {
             self.push('$');
-            let structure = directive.arguments.get(0).unwrap().as_expression();
+            let structure = directive.arguments.get(0).unwrap().as_composite();
             self.write_tex_inner(structure)?;
             self.push('$');
-        } else if command.eq("@diag") {
+        } else if command.eq("diag!") {
 
-        } else if command.ends_with('!') {
-            return Err(PreprocessorError::UnknownCommand(directive.from, String::from(command)));
         } else if command.eq("p") {
             self.push_str("\n\n");
         } else if command.eq("n") {
             self.push_str("\\\\");
         } else if command.eq("\\") {
             self.push_str("\n\\\\");
-        } else if command.eq("@def") {
+        } else if command.eq("def!") {
             if directive.length() != 3 {
                 panic!()
             }
             let defined = directive.get(0).unwrap().as_directive().unwrap();
-            let args = directive.get(1).unwrap().as_expression();
-            let arg = directive.get(2).unwrap().as_expression();
+            let args = directive.get(1).unwrap().as_composite();
+            let arg = directive.get(2).unwrap().as_composite();
             self.output.push_str("\\newcommand");
             self.output.push('{');
             self.output.push('\\');
-            self.output.push_str(defined.directive.deref());
+            self.output.push_str(defined.name.deref());
             self.output.push('}');
             self.output.push('[');
             self.write_tex_inner(args)?;
@@ -198,33 +196,33 @@ impl <'a> Writer<'a> {
                 self.push_str(command);
                 if let Some(argument) = arguments.next() {
                     match argument {
-                        ParsedComponent::Empty(_, _) => {
+                        ParsedValue::Nil(_, _) => {
                             self.push_str("[]");
                         }
-                        ParsedComponent::Text(text) => {
+                        ParsedValue::Text(text, ..) => {
                             self.push('[');
                             self.push_str(&text.as_str());
                             self.push(']');
                         }
-                        ParsedComponent::Table(table) => {
-                            return Err(IllegalTable(table.from));
+                        ParsedValue::Table(table, from, to) => {
+                            return Err(IllegalTable(*from));
                         }
-                        ParsedComponent::Dictionary(dictionary) => {
-                            return Err(IllegalDictionary(dictionary.from));
+                        ParsedValue::Dictionary(dictionary, from, to) => {
+                            return Err(IllegalDictionary(*from));
                         }
-                        ParsedComponent::Directive(directive) => {
+                        ParsedValue::Pattern(directive, from, to) => {
                             self.push('{');
-                            self.write_macro(directive)?;
+                            self.write_macro(directive, *from)?;
                             self.push('}');
                         }
                         compound => {
                             self.push('{');
-                            self.write_tex_inner(compound.as_expression())?;
+                            self.write_tex_inner(compound.as_composite())?;
                             self.push('}');
                         }
                     }
                 } else {
-                    return Err(PreprocessorError::MissingOptionalArgument(directive.from))
+                    return Err(PreprocessorError::MissingOptionalArgument(at))
                 }
             } else {
                 self.push('\\');
@@ -232,28 +230,28 @@ impl <'a> Writer<'a> {
             }
             while let Some(argument) = arguments.next() {
                 match argument {
-                    ParsedComponent::Empty(..) => {
+                    ParsedValue::Nil(..) => {
                         self.push_str("{}");
                     }
-                    ParsedComponent::Text(text) => {
+                    ParsedValue::Text(text, ..) => {
                         self.push('{');
                         self.push_str(&text.str.deref());
                         self.push('}');
                     }
-                    ParsedComponent::Table(sequence) => {
-                        return Err(IllegalTable(sequence.from));
+                    ParsedValue::Table(sequence, from, to) => {
+                        return Err(IllegalTable(*from));
                     }
-                    ParsedComponent::Dictionary(dictionary) => {
-                        return Err(IllegalDictionary(dictionary.from));
+                    ParsedValue::Dictionary(dictionary, from, to) => {
+                        return Err(IllegalDictionary(*from));
                     }
-                    ParsedComponent::Directive(command) => {
+                    ParsedValue::Pattern(command, from, to) => {
                         self.push('{');
-                        self.write_macro(command)?;
+                        self.write_macro(command, *from)?;
                         self.push('}');
                     }
                     compound => {
                         self.push('{');
-                        self.write_tex_inner(compound.as_expression())?;
+                        self.write_tex_inner(compound.as_composite())?;
                         self.push('}');
                     }
                 }

@@ -3,7 +3,7 @@
 use std::env;
 use std::fs::File;
 use std::io::Read;
-use khi::parse::{error_to_string, parse_expression_document};
+use khi::parse::{error_to_string, parse_expression_str};
 use khi::tex::{PreprocessorError, write_tex};
 
 fn main() {
@@ -21,7 +21,7 @@ fn preprocess() -> Result<String, String> {
         let mut source = String::new();
         file.read_to_string(&mut source).unwrap();
         print!("Preprocessing document of size: {}\n\n", source.len());
-        let parse = match parse_expression_document(&source) {
+        let parse = match parse_expression_str(&source) {
             Ok(parse) => parse,
             Err(error) => return Err(error_to_string(&error)),
         };

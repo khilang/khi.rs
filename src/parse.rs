@@ -1,55 +1,53 @@
 //! Parsing of Khi documents.
 //!
 //! The root element of a document can be an expression, a sequence or a dictionary.
-//! Use the corresponding function to parse a document: either [parse_expression_document],
-//! [parse_sequence_document] or [parse_dictionary_document].
+//! Use the corresponding function to parse a document: either [parse_expression_str],
+//! [parse_dictionary_str] or [parse_table_str].
 
-use std::borrow::Borrow;
 use std::collections::{HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::Deref;
 use std::rc::Rc;
 use std::slice::Iter;
-use ref_cast::RefCast;
-use crate::{Dictionary, Directive, Expression, Table, Text, Component, WhitespaceOption};
+use crate::{Dictionary, Pattern, Value, Table, Text, Element, Composition, Attribute, AttributeValue, Entry};
 use crate::lex::{lex, LexError, Position, Token};
 
 //// Parse
 
-/// Parse a document with an expression root node.
-pub fn parse_expression_document(document: &str) -> Result<ParsedExpression> {
+/// Parse an expression string.
+pub fn parse_expression_str(document: &str) -> Result<ParsedValue> {
     let tokens = tokenize(document)?;
     let mut iter = TokenIter::new(tokens.iter());
     let mut strings = HashSet::new();
-    let structure = parse_nullable_expression(&mut iter, &mut strings)?;
-    if !matches!(iter.t, Token::End(..)) {
+    let structure = parse_expression_document(&mut iter, &mut strings)?;
+    if !matches!(iter.t0, Token::End(..)) {
         return iter.expectation_error(&[TokenType::End]);
     };
     Ok(structure)
 }
 
-/// Parse a document with a table root node.
-pub fn parse_table_document(document: &str) -> Result<ParsedTable> {
+/// Parse a dictionary string.
+pub fn parse_dictionary_str(document: &str) -> Result<ParsedDictionary> {
     let tokens = tokenize(document)?;
     let mut iter = TokenIter::new(tokens.iter());
     let mut strings = HashSet::new();
-    let sequence = parse_nullable_table(&mut iter, &mut strings)?;
-    if !matches!(iter.t, Token::End(..)) {
-        return iter.expectation_error(&[TokenType::End]);
-    };
-    Ok(sequence)
-}
-
-/// Parse a document with a dictionary root node.
-pub fn parse_dictionary_document(document: &str) -> Result<ParsedDictionary> {
-    let tokens = tokenize(document)?;
-    let mut iter = TokenIter::new(tokens.iter());
-    let mut strings = HashSet::new();
-    let dictionary = parse_nullable_dictionary(&mut iter, &mut strings)?;
-    if !matches!(iter.t, Token::End(..) ) {
+    let dictionary = parse_dictionary_document(&mut iter, &mut strings)?;
+    if !matches!(iter.t0, Token::End(..) ) {
         return iter.expectation_error(&[TokenType::End]);
     };
     Ok(dictionary)
+}
+
+/// Parse a table string.
+pub fn parse_table_str(document: &str) -> Result<ParsedTable> {
+    let tokens = tokenize(document)?;
+    let mut iter = TokenIter::new(tokens.iter());
+    let mut strings = HashSet::new();
+    let sequence = parse_table_document(&mut iter, &mut strings)?;
+    if !matches!(iter.t0, Token::End(..)) {
+        return iter.expectation_error(&[TokenType::End]);
+    };
+    Ok(sequence)
 }
 
 /// Convert a Khi document to tokens.
@@ -64,6 +62,8 @@ fn tokenize(document: &str) -> Result<Vec<Token>> {
                 LexError::UnclosedQuote(at) => Err(ParseError::UnclosedQuote(at)),
                 LexError::UnknownEscapeSequence(at) => Err(ParseError::UnknownEscapeSequence(at)),
                 LexError::InvalidHashSequence(at) => Err(ParseError::UnknownHashSequence(at)),
+                LexError::EndInTag(at) => Err(ParseError::EndInQuoteOpening(at)),
+                LexError::InvalidMultilineQuoteConfiguration(at) => Err(ParseError::InvalidMultilineQuoteConfiguration(at)),
             };
         }
     };
@@ -74,30 +74,40 @@ pub type Result<T> = std::result::Result<T, ParseError>;
 
 //// Token iterator
 
-/// Token iterator.
+/// A whitespace equivalent token iterator.
 struct TokenIter<'a> {
     tokens: Iter<'a, Token>,
-    t: &'a Token,
+    t0: &'a Token,
+    t1: &'a Token,
     t2: &'a Token,
+    t3: &'a Token,
 }
 
 impl <'a> TokenIter<'a> {
 
     fn new(mut tokens: Iter<'a, Token>) -> Self {
-        let t = tokens.next().unwrap();
-        let t2 = tokens.next().unwrap_or(t);
-        TokenIter { tokens, t, t2 }
+        let t = &Token::End(Position { index: 0, line: 0, column: 0 });
+        let mut iter = TokenIter { tokens, t0: t, t1: t, t2: t, t3: t };
+        iter.next(); iter.next(); iter.next(); iter.next();
+        iter
     }
 
     fn next(&mut self) {
-        self.t = self.t2;
-        self.t2 = self.tokens.next().unwrap_or(self.t);
+        self.t0 = self.t1;
+        self.t1 = self.t2;
+        self.t2 = self.t3;
+        loop {
+            self.t3 = self.tokens.next().unwrap_or(self.t2);
+            if !(self.t2.to_type() == TokenType::Whitespace && self.t3.to_type() == TokenType::Whitespace) {
+                break;
+            }
+        }
     }
 
     fn skip_whitespace(&mut self) -> bool {
         let mut skipped = false;
         loop {
-            if matches!(self.t, Token::Whitespace(..)) {
+            if matches!(self.t0, Token::Whitespace(..)) {
                 skipped = true;
                 self.next();
             } else {
@@ -108,14 +118,14 @@ impl <'a> TokenIter<'a> {
     }
 
     fn position(&self) -> Position {
-        self.t.position()
+        self.t0.position()
     }
 
     fn peek_next_glyph_token(&mut self) -> &Token {
-        match self.t {
+        match self.t0 {
             Token::Whitespace(..) => {
                 self.skip_lookahead_whitespace();
-                self.t2
+                self.t1
             }
             t => t,
         }
@@ -123,8 +133,8 @@ impl <'a> TokenIter<'a> {
 
     fn skip_lookahead_whitespace(&mut self) {
         loop {
-            if matches!(self.t2, Token::Whitespace(..)) {
-                self.t2 = self.tokens.next().unwrap_or(self.t2);
+            if matches!(self.t1, Token::Whitespace(..)) {
+                self.t1 = self.tokens.next().unwrap_or(self.t1);
             } else {
                 break;
             }
@@ -137,7 +147,7 @@ impl <'a> TokenIter<'a> {
     }
 
     fn token_type(&self) -> TokenType {
-        self.t.to_type()
+        self.t0.to_type()
     }
 
     fn expectation_error<T>(&self, token_type: &'static[TokenType]) -> Result<T> {
@@ -151,101 +161,190 @@ impl <'a> TokenIter<'a> {
 //// Approximate recursive descent, but with modifications that require no backtracking
 //// or large lookahead.
 
-/// Parse a nullable expression.
+/// Parse an expression document.
 ///
-/// Recognizes `<null-expr>`.
+/// Recognizes `<expression-document>`.
 ///
 /// ```text
-/// # Nullable expression
-/// # Spans Expression object.
-/// <null-expr> = <>
-///             | <expr>
+/// <expression-document> = *
+///                       | *<expression>*
 /// ```
-fn parse_nullable_expression<'a>(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedExpression> {
-    if matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quote(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..)) {
-        parse_expression(iter, strings)
-    } else {
-        let from = iter.position();
+fn parse_expression_document(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedValue> {
+    let from = iter.position();
+    iter.skip_whitespace();
+    let expression = if matches!(iter.t0, Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..)) {
+        let expression = parse_expression(iter, strings)?;
         iter.skip_whitespace();
+        expression
+    } else {
         let to = iter.position();
-        Ok(ParsedComponent::empty(from, to).into())
-    }
+        ParsedValue::nil(from, to)
+    };
+    Ok(expression)
+}
+
+/// Parse a dictionary document.
+///
+/// Recognizes `<dictionary-document>`.
+///
+/// ```text
+/// <dictionary-document> = *
+///                       | *<dictionary>*
+/// ```
+fn parse_dictionary_document(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedDictionary> {
+    iter.skip_whitespace();
+    let dictionary = if matches!(iter.t0, Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::RightAngle(..)) {
+        let dictionary = parse_dictionary(iter, strings)?;
+        iter.skip_whitespace();
+        dictionary
+    } else {
+        ParsedDictionary::empty()
+    };
+    Ok(dictionary)
+}
+
+/// Parse a table document.
+///
+/// Recognizes `<table-document>`.
+///
+/// ```text
+/// <table-document> = *
+///                  | *<table>*
+/// ```
+fn parse_table_document(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedTable> {
+    iter.skip_whitespace();
+    let table = if matches!(iter.t0, Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) | Token::Bar(..) | Token::RightAngle(..)) {
+        let table = parse_table(iter, strings)?;
+        iter.skip_whitespace();
+        table
+    } else {
+        ParsedTable::empty()
+    };
+    Ok(table)
 }
 
 /// Parse an expression.
 ///
-/// Recognizes `<expr>`.
+/// Recognizes `<expression>`.
 ///
 /// ```text
-/// # Expression
-/// <expr> = <><sentence><>
-///        | <><sentence> <expr-tail-no-text><>
-///        | <><expr-tail-no-text><>
+/// <expression> = <expression'>
+///              | <expression'>_":"_<expression'> # Constructor notation
+/// <expression'> = <word>
+///               | <word> <expression'>
+///               | <quotation>
+///               | <quotation> <expression'>
+///               | <text-block>
+///               | <text-block> <expression'>
+///               | <bracketed-expression>
+///               | <bracketed-expression> <expression'>
+///               | <bracketed-dictionary>
+///               | <bracketed-dictionary> <expression'>
+///               | <bracketed-table>
+///               | <bracketed-table> <expression'>
+///               | <pattern>
+///               | <pattern> <expression'>
+///               | "~"
+///               | "~" <expression'>
 /// ```
-fn parse_expression(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedExpression> {
-    let components: Vec<ParsedComponent> = vec![];
-    let whitespace = vec![];
-    let from = iter.position();
-    let after_whitespace = iter.skip_whitespace();
-    if !matches!(iter.t, Token::Word(..) | Token::Quote(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..)) {
-        return iter.expectation_error(&[TokenType::Word, TokenType::Quote, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle]);
-    };
-    parse_expression_tail_with(iter, strings, from, components, whitespace, after_whitespace)
-}
-
-/// Parse a nullable expression tail with an initial state.
-///
-/// Recognizes `<>` and `<><expr-tail>`.
-fn parse_nullable_expression_tail_with(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>, from: Position, components: Vec<ParsedComponent>, whitespace: Vec<bool>) -> Result<ParsedExpression> {
-    let components = components;
-    let whitespace = whitespace;
-    let after_whitespace = iter.skip_whitespace();
-    if matches!(iter.t, Token::Word(..) | Token::Quote(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..)) {
-        parse_expression_tail_with(iter, strings, from, components, whitespace, after_whitespace)
-    } else {
-        iter.skip_whitespace();
-        let to = iter.position();
-        Ok(ParsedComponent::from_components(from, to, components, whitespace).into())
+fn parse_expression(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedValue> {
+    if !matches!(iter.t0, Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..)) {
+        return iter.expectation_error(&[TokenType::Word, TokenType::Quotation, TokenType::TextBlock, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Tilde]);
     }
+    let from = iter.position();
+    let head = parse_component_sequence(iter, strings)?;
+    let c0 = matches!(iter.t0, Token::Whitespace(..));
+    let c1 = matches!(iter.t1, Token::Colon(..));
+    let c2 = matches!(iter.t2, Token::Whitespace(..));
+    let c3 = matches!(iter.t3, Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..));
+    if !(c0 && c1 && c2 && c3) {
+        return Ok(head);
+    }
+    let mut tail = vec![];
+    loop {
+        iter.next(); iter.next(); iter.next();
+        let e = parse_component_sequence(iter, strings)?;
+        tail.push(e);
+        let c0 = matches!(iter.t0, Token::Whitespace(..));
+        let c1 = matches!(iter.t1, Token::Colon(..));
+        let c2 = matches!(iter.t2, Token::Whitespace(..));
+        let c3 = matches!(iter.t3, Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..));
+        if !(c0 && c1 && c2 && c3) {
+            break;
+        }
+    }
+    let to = iter.position();
+    if let ParsedValue::Pattern(ParsedPattern { name, attributes, mut arguments }, from, to) = head {
+        if arguments.len() == 0 {
+            return Ok(ParsedValue::Pattern(ParsedPattern { name, attributes, arguments: tail }, from, to));
+        } else {
+            tail.insert(0, ParsedValue::Pattern(ParsedPattern { name, attributes, arguments }, from, to));
+        }
+    } else {
+        tail.insert(0, head);
+    }
+    let len = tail.len();
+    Ok(ParsedValue::Table(ParsedTable { elements: tail, columns: len }, from, to))
 }
 
-/// Parse an expression tail with an initial state.
-///
-/// Recognizes `<><expr-tail><>`.
-///
-/// ```text
-/// # Component of an expression
-/// <expr-tail> = <sentence> <expr-tail-no-text>
-///             | <expr-tail-no-text>
-///
-/// # Component in an expression
-/// <expr-tail-no-text> = <quote>
-///                     | <quote> <expr-tail>
-///                     | <expr-cmp>
-///                     | <expr-cmp> <expr-tail>
-///                     | <dict-cmp>
-///                     | <dict-cmp> <expr-tail>
-///                     | <table-cmp>
-///                     | <table-cmp> <expr-tail>
-///                     | <closed-cmd-expr>
-///                     | <closed-cmd-expr> <expr-tail>
-///                     | <open-cmd-expr>
-///                     | <open-cmd-expr>_<expr-tail>
-///                     | <open-cmd-expr><expr-tail-no-text>
-///                     | "~"<null-expr>
-/// ```
-fn parse_expression_tail_with(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>, from: Position, components: Vec<ParsedComponent>, whitespace: Vec<bool>, after_whitespace: bool) -> Result<ParsedExpression> {
-    let mut components = components;
-    let mut whitespace = whitespace;
-    let mut after_whitespace = after_whitespace;
+fn parse_component_sequence(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedValue> {
+    let mut components: Vec<ParsedValue> = vec![];
+    let mut whitespace = vec![];
+    let from = iter.position();
+    let mut after_whitespace = false;
+    if !matches!(iter.t0, Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..)) {
+        return iter.expectation_error(&[TokenType::Word, TokenType::Quotation, TokenType::TextBlock, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Tilde]);
+    }
     loop {
-        match iter.t {
-            Token::Word(..) => push_component(&mut components, &mut whitespace, &mut after_whitespace, parse_sentence(iter, strings)?.into()),
-            Token::Quote(..) => push_component(&mut components, &mut whitespace, &mut after_whitespace, parse_quote(iter, strings)?.into()),
-            Token::LeftBracket(..) => push_component(&mut components, &mut whitespace, &mut after_whitespace, parse_bracket_component(iter, strings)?),
-            Token::LeftSquare(..) => push_component(&mut components, &mut whitespace, &mut after_whitespace, parse_table_component(iter, strings)?.into()),
-            Token::LeftAngle(..) => push_component(&mut components, &mut whitespace, &mut after_whitespace, parse_command_expression(iter, strings)?.into()),
+        match iter.t0 {
+            Token::Word(from, w) => {
+                let mut sentence = String::new();
+                sentence.push_str(w);
+                let mut to = from;
+                iter.next();
+                loop {
+                    match iter.t0 {
+                        Token::Word(at, str) => {
+                            iter.next();
+                            sentence.push_str(str);
+                            to = at;
+                        }
+                        Token::Whitespace(..) => {
+                            if !matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Tilde(..)) {
+                                break;
+                            }
+                            iter.skip_whitespace();
+                            after_whitespace = true;
+                        }
+                        Token::Tilde(..) => {
+                            iter.next();
+                            iter.skip_whitespace();
+                            after_whitespace = false;
+                        }
+                        _ => break,
+                    }
+                }
+                let to = iter.position();
+                let str = store_str(strings, &sentence);
+                let text = ParsedText { str };
+                let text = ParsedValue::Text(text, *from, to);
+                push_component(&mut components, &mut whitespace, &mut after_whitespace, text);
+            },
+            Token::Quotation(..) | Token::TextBlock(..) => {
+                let from = iter.position();
+                let text = parse_text_token(iter, strings)?;
+                let text = ParsedText { str: text };
+                let to = iter.position();
+                let expression = ParsedValue::Text(text, from, to);
+                push_component(&mut components, &mut whitespace, &mut after_whitespace, expression);
+            },
+            Token::LeftBracket(..) => push_component(&mut components, &mut whitespace, &mut after_whitespace, parse_bracket(iter, strings)?),
+            Token::LeftSquare(..) => push_component(&mut components, &mut whitespace, &mut after_whitespace, parse_bracketed_table(iter, strings)?),
+            Token::LeftAngle(..) => push_component(&mut components, &mut whitespace, &mut after_whitespace, parse_pattern(iter, strings)?),
             Token::Whitespace(..) => {
+                if !matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..)) {
+                    break;
+                }
                 iter.skip_whitespace();
                 after_whitespace = true;
             }
@@ -255,11 +354,11 @@ fn parse_expression_tail_with(iter: &mut TokenIter, strings: &mut HashSet<Rc<str
                 after_whitespace = false;
             }
             _ => break,
-        };
+        }
     };
     let to = iter.position();
-    return Ok(ParsedComponent::from_components(from, to, components, whitespace).into());
-    fn push_component(components: &mut Vec<ParsedComponent>, whitespace: &mut Vec<bool>, after_whitespace: &mut bool, component: ParsedComponent) {
+    return Ok(ParsedValue::from_components(from, to, components, whitespace));
+    fn push_component(components: &mut Vec<ParsedValue>, whitespace: &mut Vec<bool>, after_whitespace: &mut bool, component: ParsedValue) {
         if components.len() != 0 {
             if *after_whitespace {
                 whitespace.push(true);
@@ -272,233 +371,92 @@ fn parse_expression_tail_with(iter: &mut TokenIter, strings: &mut HashSet<Rc<str
     }
 }
 
-/// Parse a bracket component.
-///
-/// Recognizes `<expr-cmp>` and `<dict-cmp>`.
-///
-/// ```text
-/// # Expression component
-/// <expr-cmp> = "{"<expr>"}"
-///
-/// # Dictionary component
-/// <dict-cmp> = "{"<null-dict>"}"
-/// ```
-fn parse_bracket_component(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedComponent> {
-    if !matches!(iter.t, Token::LeftBracket(..)) {
-        return iter.expectation_error(&[TokenType::LeftBracket]);
-    };
-    iter.next();
-    let from = iter.position();
-    iter.skip_whitespace();
-    return match iter.t {
-        Token::Word(..) => {
-            let (candidate, candidate_from, candidate_to) = parse_word(iter, strings)?;
-            match iter.peek_next_glyph_token() {
-                Token::Word(..) => handle_sentence_after_plain_key(iter, strings, candidate_from, candidate, from),
-                Token::Quote(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) => handle_component_after_key(iter, strings, from, candidate, candidate_from, candidate_to),
-                Token::Colon(..) => handle_colon_after_key(iter, strings, candidate, from),
-                Token::Whitespace(..) => unreachable!(),
-                _ => handle_closing_after_key(iter, strings, candidate, candidate_from, candidate_to),
-            }
-        }
-        Token::Quote(.., quote) => {
-            let quote = String::from(quote);
-            let quote_from = iter.position();
-            iter.next();
-            let quote_to = iter.position();
-            match iter.peek_next_glyph_token() {
-                Token::Word(..) | Token::Quote(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) => handle_component_after_key(iter, strings, from, quote, quote_from, quote_to),
-                Token::Colon(..) => handle_colon_after_key(iter, strings, quote, from),
-                Token::Whitespace(..) => unreachable!(),
-                _ => handle_closing_after_key(iter, strings, quote, quote_from, quote_to),
-            }
-        }
-        Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) => {
-            let expression = parse_expression(iter, strings)?;
-            if !matches!(iter.t, Token::RightBracket(..)) {
-                return iter.expectation_error(&[TokenType::RightBracket]);
-            };
-            iter.next();
-            Ok(expression.into())
-        }
-        Token::RightBracket(..) => {
-            let to = iter.position();
-            iter.next();
-            Ok(ParsedDictionary::empty(from, to).into())
-        }
-        Token::Whitespace(..) => unreachable!(),
-        _ => return iter.expectation_error(&[TokenType::Word, TokenType::Quote, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::RightBracket, TokenType::Tilde]),
-    };
-    fn handle_colon_after_key(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>, candidate: String, from: Position) -> Result<ParsedComponent> {
-        iter.consume_next_glyph_token();
-        let key = store_str(strings, &candidate);
-        let value = parse_expression(iter, strings)?;
-        let entry = (key, value);
-        let entries = vec![entry];
-        if matches!(iter.t, Token::Semicolon(..)) {
-            iter.next();
-            if matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quote(..)) {
-                let dictionary = parse_dictionary_with(iter, strings, from, entries)?.into();
-                if !matches!(iter.t, Token::RightBracket(..)) {
-                    return iter.expectation_error(&[TokenType::RightBracket]);
-                };
-                iter.next();
-                Ok(dictionary)
-            } else {
-                iter.skip_whitespace();
-                let to = iter.position();
-                if !matches!(iter.t, Token::RightBracket(..)) {
-                    return iter.expectation_error(&[TokenType::RightBracket]);
-                };
-                iter.next();
-                Ok(ParsedDictionary { entries, from, to }.into())
-            }
-        } else {
-            let to = iter.position();
-            if !matches!(iter.t, Token::RightBracket(..)) {
-                return iter.expectation_error(&[TokenType::RightBracket]);
-            };
-            iter.next();
-            Ok(ParsedDictionary { entries, from, to }.into())
-        }
-    }
-    fn handle_component_after_key(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>, from: Position, candidate: String, candidate_from: Position, candidate_to: Position) -> Result<ParsedComponent> {
-        let candidate = store_str(strings, &candidate);
-        let text = ParsedText { str: candidate, from: candidate_from, to: candidate_to }.into();
-        let components = vec![text];
-        let after_whitespace = iter.skip_whitespace();
-        let expression = parse_expression_tail_with(iter, strings, from, components, vec![], after_whitespace)?.into();
-        if !matches!(iter.t, Token::RightBracket(..)) {
-            return iter.expectation_error(&[TokenType::RightBracket]);
-        };
-        iter.next();
-        Ok(expression)
-    }
-    fn handle_sentence_after_plain_key(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>, text_from: Position, mut word: String, from: Position) -> Result<ParsedComponent> {
-        iter.skip_whitespace();
-        word.push(' ');
-        let sentence = parse_sentence_with(iter, strings, text_from, word)?.into();
-        let components = vec![sentence];
-        let expression = parse_nullable_expression_tail_with(iter, strings, from, components, vec![])?.into();
-        if !matches!(iter.t, Token::RightBracket(..)) {
-            return iter.expectation_error(&[TokenType::RightBracket]);
-        };
-        iter.next();
-        Ok(expression)
-    }
-    fn handle_closing_after_key(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>, key: String, key_from: Position, key_to: Position) -> Result<ParsedComponent> {
-        iter.skip_whitespace();
-        let str = store_str(strings, &key);
-        if !matches!(iter.t, Token::RightBracket(..)) {
-            return iter.expectation_error(&[TokenType::RightBracket]);
-        };
-        iter.next();
-        Ok(ParsedText { str, from: key_from, to: key_to }.into())
-    }
-}
-
-/// Parse a nullable dictionary.
-///
-/// Recognizes `<null-dict>`.
-///
-/// ```text
-/// # Nullable dictionary
-/// <null-dict> = <>
-///             | <dict>
-/// ```
-fn parse_nullable_dictionary(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedDictionary> {
-    match iter.peek_next_glyph_token() {
-        Token::Word(..) | Token::Quote(..) => parse_dictionary(iter, strings),
-        Token::Whitespace(..) => unreachable!(),
-        _ => {
-            let from = iter.position();
-            iter.skip_whitespace();
-            let to = iter.position();
-            Ok(ParsedDictionary::empty(from, to))
-        }
-    }
-}
-
 /// Parse a dictionary.
 ///
-/// Recognizes `<dict>`.
+/// Recognizes `<dictionary>`.
 ///
 /// ```text
-/// # Dictionary
-/// <dict> = <><key> ":"<expr>          # Last entry
-///        | <><key> ":"<expr>";"<>     # Last entry with trailing semicolon
-///        | <><key> ":"<expr>";"<dict> # Intermediary entry
+/// <dictionary> = <flow-dictionary>
+///              | <bullet-dictionary>
 /// ```
 fn parse_dictionary(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedDictionary> {
-    let entries = vec![];
-    let from = iter.position();
-    parse_dictionary_with(iter, strings, from, entries)
+    match iter.t0 {
+        Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) => parse_flow_dictionary(iter, strings),
+        Token::RightAngle(..) => parse_bullet_dictionary(iter, strings),
+        _ => iter.expectation_error(&[TokenType::Word, TokenType::Quotation, TokenType::TextBlock, TokenType::RightAngle]),
+    }
 }
 
-/// Parse a dictionary with an initial state.
+/// Parse a flow dictionary.
 ///
-/// Recognizes `<dict>`.
+/// Recognizes `<flow-dictionary>`.
 ///
 /// ```text
-/// # Dictionary
-/// <dict> = <><key> ":"<expr>          # Last entry
-///        | <><key> ":"<expr>";"<>     # Last entry with trailing semicolon
-///        | <><key> ":"<expr>";"<dict> # Intermediary entry
+/// <flow-dictionary> = <dictionary-entry>
+///                   | <dictionary-entry> ";"
+///                   | <dictionary-entry> ";" <flow-dictionary>
+///
+/// <dictionary-entry> = <word>":" <expression>
+///                    | <quotation>":" <expression>
+///                    | <text-block>":" <expression>
 /// ```
-fn parse_dictionary_with(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>, from: Position, with: Vec<(Rc<str>, ParsedExpression)>) -> Result<ParsedDictionary> {
-    let mut entries = with;
-    if !matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quote(..)) {
-        iter.skip_whitespace();
-        return iter.expectation_error(&[TokenType::Word, TokenType::Quote]);
+fn parse_flow_dictionary(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedDictionary> {
+    let mut entries = vec![];
+    if !matches!(iter.t0, Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..)) {
+        return iter.expectation_error(&[TokenType::Word, TokenType::Quotation, TokenType::TextBlock]);
     };
     loop {
+        let key = parse_text_token(iter, strings)?;
+        if !matches!(iter.t0, Token::Colon(..)) {
+            return iter.expectation_error(&[TokenType::Colon]);
+        }
+        iter.next();
         iter.skip_whitespace();
-        let (key, _, _) = parse_word(iter, strings)?;
-        let key = store_str(strings, &key);
-        iter.skip_whitespace();
-        match iter.t {
-            Token::Colon(..) => {
-                iter.next();
-                let value = parse_expression(iter, strings)?;
-                let entry = (key, value);
-                entries.push(entry);
-                if !matches!(iter.t, Token::Semicolon(..)) {
-                    let to = iter.position();
-                    return Ok(ParsedDictionary { entries, from, to });
-                };
-                iter.next();
-                if !matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quote(..)) {
-                    iter.skip_whitespace();
-                    let to = iter.position();
-                    return Ok(ParsedDictionary { entries, from, to });
-                };
-            }
-            Token::Whitespace(..) => unreachable!(),
-            _ => return iter.expectation_error(&[TokenType::Colon, TokenType::Semicolon]),
+        let value = parse_expression(iter, strings)?;
+        entries.push(ParsedEntry(key, value));
+        if !matches!(iter.peek_next_glyph_token(), Token::Semicolon(..)) {
+            return Ok(ParsedDictionary { entries });
         };
+        iter.consume_next_glyph_token();
+        if !matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..)) {
+            return Ok(ParsedDictionary { entries });
+        };
+        iter.skip_whitespace();
     };
 }
 
-/// Parse a nullable table.
+/// Parse a bullet dictionary.
 ///
-/// Recognizes `<null-table>`.
+/// Recognizes `<bullet-dictionary>`.
 ///
 /// ```text
-/// <null-table> = <>
-///              | <table>
+/// <bullet-dictionary> = ">" <dictionary-entry>
+///                     | ">" <dictionary-entry> <bullet-dictionary>
+///
+/// <dictionary-entry> = <word>":" <expression>
+///                    | <quotation>":" <expression>
+///                    | <text-block>":" <expression>
 /// ```
-fn parse_nullable_table(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedTable> {
-    match iter.peek_next_glyph_token() {
-        Token::Word(..) | Token::Quote(..) | Token::Bar(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Colon(..) | Token::Tilde(..) => {
-            parse_table(iter, strings)
+fn parse_bullet_dictionary(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedDictionary> {
+    let mut entries = vec![];
+    if !matches!(iter.t0, Token::RightAngle(..)) {
+        return iter.expectation_error(&[TokenType::RightAngle]);
+    }
+    loop {
+        iter.next();
+        iter.skip_whitespace();
+        let key = parse_text_token(iter, strings)?;
+        if !matches!(iter.t0, Token::Colon(..)) {
+            return iter.expectation_error(&[TokenType::Colon]);
         }
-        Token::Whitespace(_) => unreachable!(),
-        _ => {
-            let from = iter.position();
-            iter.skip_whitespace();
-            let to = iter.position();
-            Ok(ParsedTable { elements: vec![], from, to, columns: 0 })
-        },
+        iter.next();
+        iter.skip_whitespace();
+        let value = parse_expression(iter, strings)?;
+        entries.push(ParsedEntry(key, value));
+        if !matches!(iter.peek_next_glyph_token(), Token::RightAngle(..)) {
+            return Ok(ParsedDictionary { entries });
+        }
+        iter.skip_whitespace();
     }
 }
 
@@ -507,67 +465,63 @@ fn parse_nullable_table(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) ->
 /// Recognizes `<table>`.
 ///
 /// ```text
-/// # Table
-/// # Though not encoded in the grammar, all rows must have the same number of columns.
-/// <table> = <seq>
-///         | <><tab><>
+/// ### All rows must have the same number of columns.
+/// <table> = <flow-table>
+///         | <grid-table>
+///         | <bullet-table>
 /// ```
 fn parse_table(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedTable> {
     match iter.peek_next_glyph_token() {
-        Token::Word(..) | Token::Quote(..) | Token::LeftSquare(..) | Token::LeftBracket(..) | Token::LeftAngle(..) | Token::Colon(..) | Token::Tilde(..) => parse_sequence_notation(iter, strings),
+        Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..)| Token::LeftSquare(..)  | Token::LeftAngle(..) | Token::Tilde(..) => parse_flow_table(iter, strings),
         Token::Bar(..) => {
-            let from = iter.position();
-            iter.skip_whitespace();
-            let (elements, columns) = parse_tabular_notation(iter, strings)?;
-            iter.skip_whitespace();
-            let to = iter.position();
-            Ok(ParsedTable { elements, from, to, columns })
+            let (elements, columns) = parse_grid_table(iter, strings)?;
+            Ok(ParsedTable { elements, columns })
         },
+        Token::RightAngle(..) => {
+            let (elements, columns) = parse_bullet_table(iter, strings)?;
+            Ok(ParsedTable { elements, columns })
+        }
         Token::Whitespace(..) => unreachable!(),
         _ => {
             iter.skip_whitespace();
-            iter.expectation_error(&[TokenType::Word, TokenType::Quote, TokenType::LeftSquare, TokenType::LeftBracket, TokenType::LeftAngle, TokenType::Bar])
+            iter.expectation_error(&[TokenType::Word, TokenType::Quotation, TokenType::TextBlock, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Tilde, TokenType::Bar, TokenType::RightAngle])
         }
     }
 }
 
-/// Parse a table written in sequence notation.
+/// Parse a flow table.
 ///
-/// Recognizes `<seq>`.
+/// Recognizes `<flow-table>`.
 ///
 /// ```text
-/// # Table in sequential notation
-/// <seq> = <expr>         # Last element
-///       | <expr>";"<>    # Last element with trailing semicolon
-///       | <expr>";"<seq> # Last element of row
-///       | <expr>"|"<seq> # Intermediary element
+/// <flow-table> = <expression>
+///              | <expression> ";"
+///              | <expression> ";" <flow-table>
+///              | <expression> "|" <flow-table>
 /// ```
-fn parse_sequence_notation(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedTable> {
+fn parse_flow_table(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedTable> {
     let mut elements = vec![];
     let mut columns = 0;
-    let from = iter.position();
     loop { // Read the first row, and determine number of columns.
         let element = parse_expression(iter, strings)?;
         elements.push(element);
         columns += 1;
-        match iter.t {
+        match iter.peek_next_glyph_token() {
             Token::Semicolon(..) => {
-                iter.next();
-                if matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quote(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Colon(..) | Token::Tilde(..)) {
+                iter.consume_next_glyph_token();
+                if matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..)) {
+                    iter.skip_whitespace();
                     break;
                 } else {
-                    iter.skip_whitespace();
-                    let to = iter.position();
-                    return Ok(ParsedTable { elements, from, to, columns });
+                    return Ok(ParsedTable { elements, columns });
                 };
             }
             Token::Bar(..) => {
-                iter.next();
+                iter.consume_next_glyph_token();
+                iter.skip_whitespace();
             }
-            Token::Word(..) | Token::Quote(..) | Token::LeftSquare(..) | Token::LeftBracket(..) | Token::LeftAngle(..) | Token::Whitespace(..) | Token::Tilde(..) => unreachable!(),
             _ => {
-                let to = iter.position();
-                return Ok(ParsedTable { elements, from, to, columns });
+                return Ok(ParsedTable { elements, columns });
             }
         }
     };
@@ -577,57 +531,59 @@ fn parse_sequence_notation(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>)
             let element = parse_expression(iter, strings)?;
             elements.push(element);
             c += 1;
-            match iter.t {
+            match iter.peek_next_glyph_token() {
                 Token::Semicolon(..) => {
+                    iter.consume_next_glyph_token();
                     if c != columns {
                         return Err(ParseError::ExpectedColumns(iter.position(), c, columns));
                     };
-                    iter.next();
-                    if matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quote(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Colon(..) | Token::Tilde(..)) {
+                    if matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..)) {
+                        iter.skip_whitespace();
                         break;
                     } else {
-                        iter.skip_whitespace();
-                        let to = iter.position();
-                        return Ok(ParsedTable { elements, from, to, columns });
+                        return Ok(ParsedTable { elements, columns });
                     };
                 }
-                Token::Bar(..) => iter.next(),
-                Token::Word(..) | Token::Quote(..) | Token::LeftSquare(..) | Token::LeftBracket(..) | Token::LeftAngle(..) | Token::Whitespace(..) | Token::Tilde(..) => unreachable!(),
+                Token::Bar(..) => {
+                    iter.consume_next_glyph_token();
+                    iter.skip_whitespace();
+                },
                 _ => {
                     if c != columns {
                         return Err(ParseError::ExpectedColumns(iter.position(), c, columns));
                     };
-                    let to = iter.position();
-                    return Ok(ParsedTable { elements, from, to, columns });
+                    return Ok(ParsedTable { elements, columns });
                 }
             }
         };
     }
 }
 
-/// Parse a table written in tabular notation.
+/// Parse a grid table.
 ///
-/// Recognizes `<tab>`.
+/// Recognizes `<grid-table>`.
 ///
 /// ```text
-/// # Table in tabular notation
-/// <tab> = "|"<expr><tab> # Intermediary element
-///       | "|" <tab>      # End of row
-///       | "|"            # End
+/// ### Cannot have zero columns.
+/// <grid-table> = "|" <expression> <grid-table>
+///              | "|" <grid-table>
+///              | "|"
 /// ```
-fn parse_tabular_notation(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<(Vec<ParsedExpression>, usize)> {
+fn parse_grid_table(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<(Vec<ParsedValue>, usize)> {
     let mut elements = vec![];
     let mut columns = 0;
     loop { // Parse the first row.
-        if !matches!(iter.t, Token::Bar(..)) {
+        if !matches!(iter.t0, Token::Bar(..)) {
             return iter.expectation_error(&[TokenType::Bar]);
         };
         iter.next();
         match iter.peek_next_glyph_token() {
-            Token::Word(..) | Token::Quote(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) => {
+            Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) => {
+                iter.skip_whitespace();
                 let expression = parse_expression(iter, strings)?;
                 columns += 1;
                 elements.push(expression);
+                iter.skip_whitespace();
             }
             Token::Bar(..) => {
                 iter.skip_whitespace();
@@ -636,7 +592,6 @@ fn parse_tabular_notation(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) 
                 };
                 break;
             }
-            Token::Whitespace(..) => unreachable!(),
             _ => {
                 if columns == 0 {
                     return Err(ParseError::ZeroColumns(iter.position()));
@@ -648,27 +603,28 @@ fn parse_tabular_notation(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) 
     loop { // Parse the remaining rows.
         let mut c = 0;
         loop {
-            if !matches!(iter.t, Token::Bar(..)) {
+            if !matches!(iter.t0, Token::Bar(..)) {
                 return iter.expectation_error(&[TokenType::Bar]);
             };
             iter.next();
             match iter.peek_next_glyph_token() {
-                Token::Word(..) | Token::Quote(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) => {
+                Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) => {
+                    iter.skip_whitespace();
                     let expression = parse_expression(iter, strings)?;
                     c += 1;
                     elements.push(expression);
+                    iter.skip_whitespace();
                 }
                 Token::Bar(..) => {
                     iter.skip_whitespace();
                     if c != columns {
-                        return Err(ParseError::ExpectedColumns(iter.position(), c, columns))
+                        return Err(ParseError::ExpectedColumns(iter.position(), c, columns));
                     };
                     break;
                 }
-                Token::Whitespace(..) => unreachable!(),
                 _ => {
                     if c != columns {
-                        return Err(ParseError::ExpectedColumns(iter.position(), c, columns))
+                        return Err(ParseError::ExpectedColumns(iter.position(), c, columns));
                     };
                     return Ok((elements, columns));
                 }
@@ -677,337 +633,378 @@ fn parse_tabular_notation(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) 
     };
 }
 
-/// Parse a table component.
+/// Parse a bullet table.
 ///
-/// Recognizes `<table-cmp>`.
+/// Recognizes `<bullet-table>`.
 ///
 /// ```text
-/// # Table component
-/// <table-cmp> = "["<null-table>"]"
+/// <bullet-table> = ">" <expression>
+///                | ">" <expression> <bullet-table'>
+/// <bullet-table'> = <bullet-table>
+///                 | "|" <expression>
+///                 | "|" <expression> <bullet-table'>
 /// ```
-fn parse_table_component(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedTable> {
-    if !matches!(iter.t, Token::LeftSquare(..)) {
-        return iter.expectation_error(&[TokenType::LeftSquare]);
-    };
+fn parse_bullet_table(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<(Vec<ParsedValue>, usize)> {
+    let mut elements = vec![];
+    let mut columns = 1;
+    if !matches!(iter.t0, Token::RightAngle(..)) {
+        return iter.expectation_error(&[TokenType::RightAngle]);
+    }
     iter.next();
-    match iter.peek_next_glyph_token() {
-        Token::Word(..) | Token::Quote(..) | Token::Bar(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) => {
-            let table = parse_table(iter, strings)?;
-            if !matches!(iter.t, Token::RightSquare(..)) {
-                return iter.expectation_error(&[TokenType::RightSquare]);
-            };
-            iter.next();
-            Ok(table)
+    iter.skip_whitespace();
+    let element = parse_expression(iter, strings)?;
+    elements.push(element);
+    loop { // Read the first row.
+        if !matches!(iter.peek_next_glyph_token(), Token::RightAngle(..) | Token::Bar(..)) {
+            return Ok((elements, columns));
         }
-        Token::RightSquare(..) => {
-            let from = iter.position();
-            iter.skip_whitespace();
-            let to = iter.position();
-            iter.next();
-            Ok(ParsedTable { elements: vec![], from, to, columns: 0, })
+        iter.skip_whitespace();
+        match iter.t0 {
+            Token::Bar(..) => {
+                columns += 1;
+                iter.next();
+                iter.skip_whitespace();
+                let element = parse_expression(iter, strings)?;
+                elements.push(element);
+            }
+            Token::RightAngle(..) => break,
+            _ => unreachable!(),
         }
-        Token::Whitespace(..) => unreachable!(),
-        _ => {
+    }
+    loop { // Read the remaining rows.
+        let mut c = 1;
+        iter.next();
+        iter.skip_whitespace();
+        let element = parse_expression(iter, strings)?;
+        elements.push(element);
+        loop {
+            if !matches!(iter.peek_next_glyph_token(), Token::RightAngle(..) | Token::Bar(..)) {
+                return if columns == c {
+                    Ok((elements, columns))
+                } else {
+                    Err(ParseError::ExpectedColumns(iter.position(), c, columns))
+                }
+            }
             iter.skip_whitespace();
-            iter.expectation_error(&[TokenType::Word, TokenType::Quote, TokenType::Bar, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::RightSquare, TokenType::Tilde])
+            match iter.t0 {
+                Token::Bar(..) => {
+                    c += 1;
+                    iter.next();
+                    iter.skip_whitespace();
+                    let element = parse_expression(iter, strings)?;
+                    elements.push(element);
+                }
+                Token::RightAngle(..) => {
+                    if columns == c {
+                        break;
+                    } else {
+                        return Err(ParseError::ExpectedColumns(iter.position(), c, columns));
+                    }
+                }
+                _ => unreachable!(),
+            }
         }
     }
 }
 
-/// Parse a command.
+/// Parse a tag.
+///
+/// Recognizes `<tag>`.
 ///
 /// ```text
-/// # Command
-/// <cmd> = "<"<word> ">"
-///       | "<"<word> <attr> ">"
+/// ### Name cannot start with a hash sign.
+/// <tag> = "<"<word>">"
+///       | "<"<word> <attributes> ">"
 /// ```
-fn parse_command(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<(String, Vec<(Rc<str>, ParsedExpression)>)> {
-    if !matches!(iter.t, Token::LeftAngle(..)) {
+fn parse_tag(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<(Rc<str>, Vec<ParsedAttribute>)> {
+    if !matches!(iter.t0, Token::LeftAngle(..)) {
         return iter.expectation_error(&[TokenType::LeftAngle]);
     };
     iter.next();
-    parse_directive_tail(iter, strings)
-}
-
-/// Parse the remainder of a command.
-fn parse_directive_tail(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<(String, Vec<(Rc<str>, ParsedExpression)>)> {
-    if !matches!(iter.t, Token::Word(..)) {
-        return iter.expectation_error(&[TokenType::Word]);
+    let name = match iter.t0 {
+        Token::Word(_, s) => s,
+        _ => return iter.expectation_error(&[TokenType::Word]),
     };
-    let (directive, _, _) = parse_word(iter, strings)?;
+    iter.next();
+    let name = store_str(strings, name);
+    if name.starts_with("#") { // Pattern name cannot start with a hash sign.
+        return Err(ParseError::PatternHashName(iter.position()));
+    }
+    if matches!(iter.t0, Token::RightAngle(..)) {
+        iter.next();
+        return Ok((name, vec![]));
+    }
     iter.skip_whitespace();
-    let attributes = if matches!(iter.t, Token::Word(..)) {
-        parse_attributes(iter, strings)?
-    } else {
-        vec![]
-    };
+    let attributes = parse_attributes(iter, strings)?;
     iter.skip_whitespace();
-    if !matches!(iter.t, Token::RightAngle(..)) {
+    if !matches!(iter.t0, Token::RightAngle(..)) {
         return iter.expectation_error(&[TokenType::RightAngle]);
     };
     iter.next();
-    Ok((directive, attributes))
+    Ok((name, attributes))
 }
 
 /// Parse attributes.
 ///
-/// Recognizes `<attr>.`
+/// Recognizes `<attributes>`.
 ///
 /// ```text
-/// # Attribute
-/// <attr> = <word>
-///        | <word>_<attr>
-///        | <word>":"<word>
-///        | <word>":"<word>_<attr>
-///        | <word>":"<quote>
-///        | <word>":"<quote> <attr>
-///        | <word>":"<expr-cmp>
-///        | <word>":"<expr-cmp> <attr>
-///        | <word>":"<dict-cmp>
-///        | <word>":"<dict-cmp> <attr>
-///        | <word>":"<table-cmp>
-///        | <word>":"<table-cmp> <attr>
+/// <attributes> = <word>
+///              | <word> <attributes>
+///              | <word>":" <word>
+///              | <word>":" <word> <attributes>
+///              | <word>":" <quotation>
+///              | <word>":" <quotation> <attributes>
+///              | <word>":" <text-block>
+///              | <word>":" <text-block> <attributes>
 /// ```
-fn parse_attributes(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<Vec<(Rc<str>, ParsedExpression)>> {
+fn parse_attributes(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<Vec<ParsedAttribute>> {
     let mut attributes = vec![];
+    if !matches!(iter.t0, Token::Word(..)) {
+        return iter.expectation_error(&[TokenType::Word]);
+    }
     loop {
-        let (key, _key_from, _key_to) = parse_word(iter, strings)?;
-        let value = match iter.t {
-            Token::Colon(..) => {
-                iter.next();
-                match iter.t {
-                    Token::Word(..) => parse_text_word(iter, strings)?.into(),
-                    Token::Quote(..) => parse_quote(iter, strings)?.into(),
-                    Token::LeftBracket(..) => parse_bracket_component(iter, strings)?.into(),
-                    Token::LeftSquare(..) => parse_table_component(iter, strings)?.into(),
-                    _ => return iter.expectation_error(&[TokenType::Word, TokenType::Quote, TokenType::LeftBracket, TokenType::LeftSquare])
+        if let Token::Word(_, key) = iter.t0 {
+            let key = store_str(strings, key);
+            match iter.t0 {
+                Token::Colon(..) => {
+                    iter.next();
+                    iter.skip_whitespace();
+                    let value = parse_text_token(iter, strings)?;
+                    attributes.push(ParsedAttribute(key, Some(value)));
                 }
+                _ => {
+                    attributes.push(ParsedAttribute(key, None));
+                }
+            };
+            if !matches!(iter.peek_next_glyph_token(), Token::Word(..)) {
+                return Ok(attributes);
             }
-            Token::Word(..) => unreachable!(),
-            _ => {
-                let at = iter.position();
-                ParsedComponent::Empty(at, at).into()
-            }
-        };
-        let key = store_str(strings, &key);
-        let attribute = (key, value);
-        attributes.push(attribute);
-        if !matches!(iter.peek_next_glyph_token(), Token::Word(..)) {
-            return Ok(attributes);
-        };
-        iter.skip_whitespace();
+            iter.skip_whitespace();
+        } else {
+            unreachable!();
+        }
     };
 }
 
-/// Parse a command argument.
+/// Parse a pattern.
 ///
-/// Recognizes `<cmd>`.
-fn parse_command_argument(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedDirective> {
-    let from = iter.position();
-    let (directive, attributes) = parse_command(iter, strings)?;
-    let directive = store_str(strings, &directive);
-    let to = iter.position();
-    Ok(ParsedDirective { directive, attributes, arguments: vec![], from, to })
-}
-
-/// Parse a command expression.
-///
-/// Recognizes `<open-cmd-expr>` and `<closed-cmd-expr>`.
+/// Recognizes `<pattern>`.
 ///
 /// ```text
-/// # Open command expression
-/// <open-cmd-expr> = <cmd><open-cmd-arg>
-///
-/// # Command argument
-/// <open-cmd-arg> = ":"<arg-word>
-///                | ":"<arg-word><cmd-arg>
-///                | ":"<quote><cmd-arg>
-///                | ":"<expr-cmp><cmd-arg>
-///                | ":"<table-cmp><cmd-arg>
-///                | ":"<dict-cmp><cmd-arg>
-///                | ":"<cmd><cmd-arg>
-///                | ":""<>"":"<open-cmd-expr>
-///
-/// <closed-cmd-expr> = <cmd><closed-cmd-arg>
-///
-/// <closed-cmd-arg> = ":"<arg-word><cmd-arg>
-///                  | ":"<quote><cmd-arg>
-///                  | ":"<quote>
-///                  | ":"<expr-cmp><cmd-arg>
-///                  | ":"<expr-cmp>
-///                  | ":"<table-cmp><cmd-arg>
-///                  | ":"<table-cmp>
-///                  | ":"<dict-cmp><cmd-arg>
-///                  | ":"<dict-cmp>
-///                  | ":"<cmd><cmd-arg>
-///                  | ":"<cmd>
-///                  | ":""<>"":"<closed-cmd-expr>
+/// <pattern> = <tag>
+///           | <tag><arguments>
 /// ```
-fn parse_command_expression(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedDirective> {
+fn parse_pattern(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedValue> {
     let from = iter.position();
-    let (directive, attributes) = parse_command(iter, strings)?;
-    let directive = store_str(strings, &directive);
+    let (name, attributes) = parse_tag(iter, strings)?;
+    let arguments = if matches!(iter.t0, Token::Colon(..)) {
+        parse_arguments(iter, strings)?
+    } else {
+        vec![]
+    };
+    let to = iter.position();
+    Ok(ParsedValue::Pattern(ParsedPattern { name, attributes, arguments }, from, to))
+}
+
+/// Parse arguments.
+///
+/// Recognizes `<arguments>`.
+///
+/// ```text
+/// <arguments> = ":"<word>
+///             | ":"<word><arguments>
+///             | ":"<quotation>
+///             | ":"<quotation><arguments>
+///             | ":"<text-block>
+///             | ":"<text-block><arguments>
+///             | ":"<bracketed-expression>
+///             | ":"<bracketed-expression><arguments>
+///             | ":"<bracketed-dictionary>
+///             | ":"<bracketed-dictionary><arguments>
+///             | ":"<bracketed-table>
+///             | ":"<bracketed-table><arguments>
+///             | ":"<tag>
+///             | ":"<tag><arguments>
+///             | ":""<>"":"<pattern>
+/// ```
+fn parse_arguments(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<Vec<ParsedValue>> {
     let mut arguments = vec![];
+    if !matches!(iter.t0, Token::Colon(..)) {
+        return iter.expectation_error(&[TokenType::Colon]);
+    };
+    iter.next();
     loop {
-        if !matches!(iter.t, Token::Colon(..)) {
-            break;
-        };
-        iter.next();
-        match iter.t {
-            Token::Word(..) => {
-                let text = parse_argument_word(iter, strings)?;
-                arguments.push(text.into());
-            }
-            Token::Quote(..) => {
-                let text = parse_quote(iter, strings)?;
-                arguments.push(text.into());
+        match iter.t0 {
+            Token::Word(.., s) | Token::Quotation(.., s) | Token::TextBlock(.., s) => {
+                let from = iter.position();
+                iter.next();
+                let to = iter.position();
+                let str = store_str(strings, s);
+                let text = ParsedValue::Text(ParsedText { str }, from, to);
+                arguments.push(text);
             }
             Token::LeftBracket(..) => {
-                let argument = parse_bracket_component(iter, strings)?;
-                arguments.push(argument.into());
+                let argument = parse_bracket(iter, strings)?;
+                arguments.push(argument);
             }
             Token::LeftSquare(..) => {
-                let table = parse_table_component(iter, strings)?;
-                arguments.push(table.into());
+                let table = parse_bracketed_table(iter, strings)?;
+                arguments.push(table);
             }
             Token::LeftAngle(..) => {
-                let command = parse_command_argument(iter, strings)?;
-                arguments.push(command.into());
+                let from = iter.position();
+                let (name, attributes) = parse_tag(iter, strings)?;
+                let name = store_str(strings, &name);
+                let to = iter.position();
+                let pattern = ParsedValue::Pattern(ParsedPattern { name, attributes, arguments: vec![] }, from, to);
+                arguments.push(pattern);
             }
             Token::Diamond(..) => {
                 iter.next();
-                if !matches!(iter.t, Token::Colon(..)) {
+                if !matches!(iter.t0, Token::Colon(..)) {
                     return iter.expectation_error(&[TokenType::Colon]);
                 };
                 iter.next();
-                let right_hand_command = parse_command_expression(iter, strings)?;
-                arguments.push(right_hand_command.into());
+                let right_hand_command = parse_pattern(iter, strings)?;
+                arguments.push(right_hand_command);
+                return Ok(arguments);
             }
-            _ => {
-                return iter.expectation_error(&[TokenType::Word, TokenType::Quote, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Diamond]);
-            }
+            _ => return iter.expectation_error(&[TokenType::Word, TokenType::Quotation, TokenType::TextBlock, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Diamond]),
+        }
+        if !matches!(iter.t0, Token::Colon(..)) {
+            return Ok(arguments);
         };
-    };
-    let to = iter.position();
-    Ok(ParsedDirective { directive, attributes, arguments, from, to })
-}
-
-/// Parse a sentence.
-///
-/// Recognizes `<sentence>`.
-///
-/// Corresponds to any combination of Word, Query, HashQuery, Whitespace tokens where
-/// Whitespace is not at the beginning or end.
-///
-/// Assumes that the current token is Word, Query or HashQuery.
-fn parse_sentence(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedText> {
-    let sentence = String::new();
-    let from = iter.position();
-    match iter.t {
-        Token::Word(..) => parse_sentence_with(iter, strings, from, sentence),
-        _ => return iter.expectation_error(&[TokenType::Word]),
+        iter.next();
     }
 }
 
-/// Parse a sentence with an initial state. XX
+/// Parse a bracketed expression or dictionary.
 ///
-/// Recognizes `<sentence>`.
-fn parse_sentence_with(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>, from: Position, with: String) -> Result<ParsedText> {
-    let mut sentence = with;
-    loop {
-        match iter.t {
-            Token::Word(.., w) => {
-                sentence.push_str(&w);
-                iter.next();
-            }
-            Token::Whitespace(..) => {
-                match iter.peek_next_glyph_token() {
-                    Token::Word(..) => {
-                        sentence.push(' ');
-                        iter.skip_whitespace();
-                    },
-                    Token::Whitespace(..) => unreachable!(),
-                    _ => break,
+/// Recognizes `<bracketed-expression>` and `<bracketed-dictionary>`.
+///
+/// ```text
+/// <bracketed-expression> = "{" <expression> "}"
+///
+/// <bracketed-dictionary> = "{" "}"
+///                        | "{" <dictionary> "}"
+/// ```
+fn parse_bracket(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedValue> {
+    if !matches!(iter.t0, Token::LeftBracket(..)) {
+        return iter.expectation_error(&[TokenType::LeftBracket]);
+    };
+    let from = iter.position();
+    iter.next();
+    iter.skip_whitespace();
+    match iter.t0 {
+        Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) => {
+            match iter.t1 {
+                Token::Colon(..) => {
+                    let dictionary = parse_dictionary(iter, strings)?;
+                    iter.skip_whitespace();
+                    if !matches!(iter.t0, Token::RightBracket(..)) {
+                        return iter.expectation_error(&[TokenType::RightBracket]);
+                    }
+                    iter.next();
+                    let to = iter.position();
+                    Ok(ParsedValue::Dictionary(dictionary, from, to))
+                }
+                Token::Whitespace(..) | Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) | Token::RightBracket(..) => {
+                    let expression = parse_expression(iter, strings);
+                    iter.skip_whitespace();
+                    if !matches!(iter.t0, Token::RightBracket(..)) {
+                        return iter.expectation_error(&[TokenType::RightBracket]);
+                    }
+                    iter.next();
+                    expression
+                }
+                _ => {
+                    iter.next();
+                    return iter.expectation_error(&[TokenType::Colon, TokenType::Whitespace, TokenType::Word, TokenType::Quotation, TokenType::TextBlock, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Tilde, TokenType::RightBracket]);
                 }
             }
-            _ => break,
-        };
-    };
-    let to = iter.position();
-    let str = store_str(strings, &sentence);
-    Ok(ParsedText { str, from, to })
-}
-
-/// Parse a word as text.
-fn parse_text_word(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedText> {
-    let (word, from, to) = parse_word(iter, strings)?;
-    let str = store_str(strings, &word);
-    Ok(ParsedText { str, from, to })
-}
-
-/// Parse a word.
-///
-/// Corresponds to any combination of Word, Query, HashQuery tokens.
-///
-/// Used for attribute key, attribute value, directive header, dictionary key,
-fn parse_word(iter: &mut TokenIter, _strings: &mut HashSet<Rc<str>>) -> Result<(String, Position, Position)> {
-    let mut word = String::new();
-    let from = iter.position();
-    if !matches!(iter.t, Token::Word(..)) {
-        return iter.expectation_error(&[TokenType::Word]);
-    };
-    loop {
-        match iter.t {
-            Token::Word(.., w) => {
-                word.push_str(w);
-                iter.next();
-            }
-            _ => break,
-        };
-    };
-    let to = iter.position();
-    Ok((word, from, to))
-}
-
-/// Parse an argument word.
-///
-/// Recognizes `<arg-word>`.
-fn parse_argument_word(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedText> {
-    let mut word = String::new();
-    let from = iter.position();
-    if !matches!(iter.t, Token::Word(..)) {
-        return iter.expectation_error(&[TokenType::Word]);
-    };
-    loop {
-        match iter.t {
-            Token::Word(.., str) => {
-                iter.next();
-                word.push_str(str);
-            }
-            _ => break,
-        };
-    };
-    let to = iter.position();
-    let str = store_str(strings, &word);
-    Ok(ParsedText { str, from, to })
-}
-
-/// Parse a quote.
-///
-/// Recognizes `<quote>`.
-fn parse_quote(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedText> {
-    match iter.t {
-        Token::Quote(from, str) => {
+        }
+        Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) => { // Expression
+            let expression = parse_expression(iter, strings)?;
+            iter.skip_whitespace();
+            if !matches!(iter.t0, Token::RightBracket(..)) {
+                return iter.expectation_error(&[TokenType::RightBracket]);
+            };
+            iter.next();
+            Ok(expression)
+        }
+        Token::RightBracket(..) => { // Empty dictionary
+            let dictionary = ParsedDictionary::empty();
             iter.next();
             let to = iter.position();
-            let str = store_str(strings, str);
-            Ok(ParsedText { str, from: *from, to })
+            Ok(ParsedValue::Dictionary(dictionary, from, to))
         }
-        _ => iter.expectation_error(&[TokenType::Quote]),
+        Token::RightAngle(..) => { // Bullet dictionary
+            let dictionary = parse_dictionary(iter, strings)?;
+            iter.skip_whitespace();
+            if !matches!(iter.t0, Token::RightBracket(..)) {
+                return iter.expectation_error(&[TokenType::RightBracket]);
+            }
+            iter.next();
+            let to = iter.position();
+            Ok(ParsedValue::Dictionary(dictionary, from, to))
+        }
+        Token::Whitespace(..) => unreachable!(),
+        _ => return iter.expectation_error(&[TokenType::Word, TokenType::Quotation, TokenType::TextBlock, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Tilde, TokenType::RightBracket, TokenType::RightAngle]),
+    }
+}
+
+/// Parse a bracketed table.
+///
+/// Recognizes `<bracketed-table>`.
+///
+/// ```text
+/// <bracketed-table> = "[" "]"
+///                   | "[" <table> "]"
+/// ```
+fn parse_bracketed_table(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedValue> {
+    let from = iter.position();
+    if !matches!(iter.t0, Token::LeftSquare(..)) {
+        return iter.expectation_error(&[TokenType::LeftSquare]);
+    };
+    iter.next();
+    iter.skip_whitespace();
+    match iter.t0 {
+        Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) | Token::Bar(..) | Token::RightAngle(..) => {
+            let table = parse_table(iter, strings)?;
+            iter.skip_whitespace();
+            if !matches!(iter.t0, Token::RightSquare(..)) {
+                return iter.expectation_error(&[TokenType::RightSquare]);
+            };
+            iter.next();
+            let to = iter.position();
+            Ok(ParsedValue::Table(table, from, to))
+        }
+        Token::RightSquare(..) => {
+            iter.next();
+            let to = iter.position();
+            let table = ParsedTable::empty();
+            Ok(ParsedValue::Table(table, from, to))
+        }
+        Token::Whitespace(..) => unreachable!(),
+        _ => iter.expectation_error(&[TokenType::Word, TokenType::Quotation, TokenType::TextBlock, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Tilde, TokenType::Bar, TokenType::RightAngle, TokenType::RightSquare]),
     }
 }
 
 //// Utility
+
+/// Parse a word, quotation or text block.
+///
+/// Recognizes `<word>`, `<quotation>` and `<text-block>`.
+fn parse_text_token(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<Rc<str>> {
+    match iter.t0 {
+        Token::Word(_, s) | Token::Quotation(_, s) | Token::TextBlock(_, s) => {
+            iter.next();
+            Ok(store_str(strings, s))
+        },
+        _ => iter.expectation_error(&[TokenType::Word, TokenType::Quotation, TokenType::TextBlock]),
+    }
+}
 
 fn store_str(strings: &mut HashSet<Rc<str>>, candidate: &str) -> Rc<str> {
     if let Some(str) = strings.get(candidate) {
@@ -1034,8 +1031,10 @@ pub enum ParseError {
     Expected(&'static[TokenType], TokenType, Position),
     UnknownEscapeSequence(Position),
     UnknownHashSequence(Position),
+    PatternHashName(Position),
+    EndInQuoteOpening(Position),
+    InvalidMultilineQuoteConfiguration(Position),
 }
-
 
 impl Debug for ParseError {
 
@@ -1044,7 +1043,6 @@ impl Debug for ParseError {
     }
 
 }
-
 
 pub fn error_to_string(error: &ParseError) -> String {
     match error {
@@ -1072,6 +1070,15 @@ pub fn error_to_string(error: &ParseError) -> String {
         ParseError::UnknownHashSequence(at) => {
             format!("Encountered unknown hash sequence at {}:{}.", at.line, at.column)
         }
+        ParseError::PatternHashName(at) => {
+            format!("Pattern name cannot start with hash sign at {}:{}", at.line, at.column)
+        }
+        ParseError::EndInQuoteOpening(at) => {
+            format!("Encountered end in multiline quote opening at {}:{}", at.line, at.column)
+        }
+        ParseError::InvalidMultilineQuoteConfiguration(at) => {
+            format!("Encountered invalid configuration in multiline quote opening at {}:{}", at.line, at.column)
+        }
     }
 }
 
@@ -1091,263 +1098,125 @@ fn list(expected: &[TokenType]) -> String {
 ////
 //// Parsing a document yields a nested structure consisting of these structures.
 
-//// Expression
+//// Structure
 
-#[derive(RefCast, Clone)]
-#[repr(transparent)]
-pub struct ParsedExpression(ParsedComponent);
+/// A parsed structure.
+#[derive(Clone)]
+pub enum ParsedValue {
+    Nil(Position, Position),
+    Text(ParsedText, Position, Position),
+    Dictionary(ParsedDictionary, Position, Position),
+    Table(ParsedTable, Position, Position),
+    Composition(ParsedComposition, Position, Position),
+    Pattern(ParsedPattern, Position, Position),
+}
 
-impl ParsedExpression {
+impl ParsedValue {
 
-    fn as_component(&self) -> &ParsedComponent {
-        &self.0
+    pub fn nil(from: Position, to: Position) -> Self {
+        ParsedValue::Nil(from, to)
+    }
+
+    pub fn from_components(from: Position, to: Position, mut components: Vec<ParsedValue>, whitespace: Vec<bool>) -> Self {
+        let len = components.len();
+        if len == 0 {
+            ParsedValue::Nil(from, to)
+        } else if len == 1 {
+            components.pop().unwrap()
+        } else {
+            assert_eq!(len - 1, whitespace.len());
+            ParsedValue::Composition(ParsedComposition { components, whitespace }, from, to)
+        }
+    }
+
+    pub fn from(&self) -> Position {
+        match self {
+            ParsedValue::Nil(.., from, _) => from,
+            ParsedValue::Text(.., from, _) => from,
+            ParsedValue::Dictionary(.., from, _) => from,
+            ParsedValue::Table(.., from, _) => from,
+            ParsedValue::Composition(.., from, _) => from,
+            ParsedValue::Pattern(.., from, _) => from,
+        }.clone()
+    }
+
+    pub fn to(&self) -> Position {
+        match self {
+            ParsedValue::Nil(.., to) => to,
+            ParsedValue::Text(.., to) => to,
+            ParsedValue::Dictionary(.., to) => to,
+            ParsedValue::Table(.., to) => to,
+            ParsedValue::Composition(.., to) => to,
+            ParsedValue::Pattern(.., to) => to,
+        }.clone()
     }
 
 }
 
-impl Expression<Self, ParsedText, ParsedDictionary, ParsedTable, ParsedDirective, ParsedComponent> for ParsedExpression {
+impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposition, ParsedPattern> for ParsedValue {
 
-    type ComponentIterator<'b> = ComponentIterator<'b>;
-
-    //type ComponentIterator<'b> =  where Self: 'b, 'b: 'a;
-
-    type ComponentIteratorWithWhitespace<'b> = ComponentIteratorWithWhitespace<'b>;
-
-    fn length(&self) -> usize {
-        match &self.0 {
-            ParsedComponent::Empty(..) => 0,
-            ParsedComponent::Text(ParsedText { .. }) => 1,
-            ParsedComponent::Table(ParsedTable { .. }) => 1,
-            ParsedComponent::Dictionary(ParsedDictionary { .. }) => 1,
-            ParsedComponent::Directive(ParsedDirective { .. }) => 1,
-            ParsedComponent::Compound(components, ..) => components.len(),
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        matches!(self.0, ParsedComponent::Empty(..))
-    }
-
-    fn is_unary(&self) -> bool {
-        matches!(self.0, ParsedComponent::Text(..) | ParsedComponent::Table(..) | ParsedComponent::Dictionary(..) | ParsedComponent::Directive(..))
-    }
-
-    fn is_compound(&self) -> bool {
-        matches!(self.0, ParsedComponent::Compound(..))
-    }
-
-    fn get(&self, index: usize) -> Option<&ParsedComponent> {
-        match &self.0 {
-            ParsedComponent::Empty(..) => None,
-            c @ ParsedComponent::Text(..) => {
-                if index == 0 { Some(c) } else { None }
-            }
-            c @ ParsedComponent::Table(..) => {
-                if index == 0 { Some(c) } else { None }
-            }
-            c @ ParsedComponent::Dictionary(..) => {
-                if index == 0 { Some(c) } else { None }
-            }
-            c @ ParsedComponent::Directive(..) => {
-                if index == 0 { Some(c) } else { None }
-            }
-            ParsedComponent::Compound(components, ..) => {
-                components.get(index)
-            }
-        }
-    }
-
-    fn iter_components_with_whitespace(&self) -> Self::ComponentIteratorWithWhitespace<'_> {
-        match &self.0 {
-            ParsedComponent::Empty(..) => ComponentIteratorWithWhitespace::Empty,
-            ParsedComponent::Text(..) | ParsedComponent::Dictionary(..) | ParsedComponent::Table(..) | ParsedComponent::Directive(..) => {
-                ComponentIteratorWithWhitespace::Unary { component: &self.0, done: false }
-            }
-            ParsedComponent::Compound(components, whitespace, _from, _to) => {
-                ComponentIteratorWithWhitespace::Compound { components, whitespace, index: 0, after_component: false }
-            }
-        }
-    }
-
-    fn iter_components(&self) -> Self::ComponentIterator<'_> {
-        match &self.0 {
-            ParsedComponent::Empty(..) => ComponentIterator::Empty,
-            ParsedComponent::Text(..) | ParsedComponent::Table(..) | ParsedComponent::Dictionary(..) | ParsedComponent::Directive(..) => {
-                ComponentIterator::Unary { component: &self.0, done: false }
-            },
-            ParsedComponent::Compound(components, _, _, _) => ComponentIterator::Compound { components, index: 0 },
-        }
-    }
-
-    fn conform_text(&self) -> Option<&ParsedText> {
-        if let ParsedComponent::Text(t) = self.as_component() {
+    fn as_text(&self) -> Option<&ParsedText> {
+        if let ParsedValue::Text(t, ..) = self {
             Some(t)
         } else {
             None
         }
     }
 
-    fn conform_table(&self) -> Option<&ParsedTable> {
-        if let ParsedComponent::Table(t) = self.as_component() {
+    fn as_dictionary(&self) -> Option<&ParsedDictionary> {
+        if let ParsedValue::Dictionary(d, ..) = self {
+            Some(d)
+        } else {
+            None
+        }
+    }
+
+    fn as_table(&self) -> Option<&ParsedTable> {
+        if let ParsedValue::Table(t, ..) = self {
             Some(t)
         } else {
             None
         }
     }
 
-    fn conform_dictionary(&self) -> Option<&ParsedDictionary> {
-        if let ParsedComponent::Dictionary(d) = self.as_component() {
+    fn as_composition(&self) -> Option<&ParsedComposition> {
+        if let ParsedValue::Composition(d, ..) = self {
             Some(d)
         } else {
             None
         }
     }
 
-    fn conform_directive(&self) -> Option<&ParsedDirective> {
-        if let ParsedComponent::Directive(d) = self.as_component() {
+    fn as_pattern(&self) -> Option<&ParsedPattern> {
+        if let ParsedValue::Pattern(d, ..) = self {
             Some(d)
         } else {
             None
         }
     }
 
-    fn as_component(&self) -> &ParsedComponent {
-        &self.0
+    fn is_nil(&self) -> bool {
+        matches!(self, ParsedValue::Nil(..))
     }
 
     fn is_text(&self) -> bool {
-        matches!(self.0, ParsedComponent::Text(..))
-    }
-
-    fn is_table(&self) -> bool {
-        matches!(self.0, ParsedComponent::Table(..))
+        matches!(self, ParsedValue::Text(..))
     }
 
     fn is_dictionary(&self) -> bool {
-        matches!(self.0, ParsedComponent::Dictionary(..))
+        matches!(self, ParsedValue::Dictionary(..))
     }
 
-    fn is_directive(&self) -> bool {
-        matches!(self.0, ParsedComponent::Directive(..))
+    fn is_table(&self) -> bool {
+        matches!(self, ParsedValue::Table(..))
     }
 
-}
-
-pub enum ComponentIterator<'a> {
-    Empty,
-    Unary { component: &'a ParsedComponent, done: bool },
-    Compound { components: &'a[ParsedComponent], index: usize },
-}
-
-impl <'b> Iterator for ComponentIterator<'b> {
-
-    type Item = &'b ParsedComponent;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            ComponentIterator::Empty => None,
-            ComponentIterator::Unary { component, done } => {
-                if !*done {
-                    *done = true;
-                    Some(component)
-                } else {
-                    None
-                }
-            }
-            ComponentIterator::Compound { components, index } => {
-                if *index < components.len() {
-                    let component = &components.get(*index).unwrap();
-                    *index += 1;
-                    Some(component)
-                } else {
-                    None
-                }
-            }
-        }
+    fn is_composition(&self) -> bool {
+        matches!(self, ParsedValue::Composition(..))
     }
 
-}
-
-pub enum ComponentIteratorWithWhitespace<'b> {
-    Empty,
-    Unary { component: &'b ParsedComponent, done: bool },
-    Compound { components: &'b[ParsedComponent], whitespace: &'b[bool], index: usize, after_component: bool },
-}
-
-impl <'b> Iterator for ComponentIteratorWithWhitespace<'b> {
-
-    type Item = WhitespaceOption<&'b ParsedComponent>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            ComponentIteratorWithWhitespace::Empty => None,
-            ComponentIteratorWithWhitespace::Unary { component, done } => {
-                if !*done {
-                    *done = true;
-                    Some(WhitespaceOption::Component(component))
-                } else {
-                    None
-                }
-            },
-            ComponentIteratorWithWhitespace::Compound { components, whitespace, index, after_component } => {
-                if *index != components.len() - 1 {
-                    if *after_component {
-                        let whitespace = whitespace[*index];
-                        *index += 1;
-                        if whitespace {
-                            *after_component = false;
-                            return Some(WhitespaceOption::Whitespace);
-                        };
-                    };
-                } else {
-                    if *after_component {
-                        return None;
-                    };
-                };
-                *after_component = true;
-                Some(WhitespaceOption::Component(&components[*index]))
-            }
-        }
-    }
-
-}
-
-impl From<ParsedText> for ParsedExpression {
-
-    fn from(text: ParsedText) -> Self {
-        ParsedComponent::Text(text).into_expression()
-    }
-
-}
-
-impl From<ParsedTable> for ParsedExpression {
-
-    fn from(sequence: ParsedTable) -> Self {
-        ParsedComponent::Table(sequence).into_expression()
-    }
-
-}
-
-impl From<ParsedDictionary> for ParsedExpression {
-
-    fn from(dictionary: ParsedDictionary) -> Self {
-        ParsedComponent::Dictionary(dictionary).into_expression()
-    }
-
-}
-
-impl From<ParsedDirective> for ParsedExpression {
-
-    fn from(command: ParsedDirective) -> Self {
-        ParsedComponent::Directive(command).into_expression()
-    }
-
-}
-
-impl From<ParsedComponent> for ParsedExpression {
-
-    fn from(component: ParsedComponent) -> Self {
-        component.into_expression()
+    fn is_pattern(&self) -> bool {
+        matches!(self, ParsedValue::Pattern(..))
     }
 
 }
@@ -1355,9 +1224,9 @@ impl From<ParsedComponent> for ParsedExpression {
 //// Text
 
 #[derive(PartialEq, Eq, Clone)]
-pub struct ParsedText { pub str: Rc<str>, pub from: Position, pub to: Position }
+pub struct ParsedText { pub str: Rc<str> }
 
-impl Text<ParsedExpression, Self, ParsedDictionary, ParsedTable, ParsedDirective, ParsedComponent> for ParsedText {
+impl Text<ParsedValue, Self, ParsedDictionary, ParsedTable, ParsedComposition, ParsedPattern> for ParsedText {
 
     fn as_str(&self) -> &str {
         &self.str
@@ -1370,18 +1239,22 @@ impl Text<ParsedExpression, Self, ParsedDictionary, ParsedTable, ParsedDirective
 /// A parsed dictionary.
 #[derive(Clone)]
 pub struct ParsedDictionary {
-    pub entries: Vec<(Rc<str>, ParsedExpression)>,
-    pub from: Position,
-    pub to: Position,
+    pub entries: Vec<ParsedEntry>,
 }
 
-impl Dictionary<ParsedExpression, ParsedText, Self, ParsedTable, ParsedDirective, ParsedComponent> for ParsedDictionary {
+impl ParsedDictionary {
 
-    type EntryIterator<'a> = EntryIterator<'a>;
+    pub fn empty() -> Self {
+        ParsedDictionary { entries: vec![] }
+    }
 
-    //type EntryIterator<'b> = EntryIterator<'b> where 'a: 'b, EntryIterator<'b>: 'b;
+}
 
-    fn length(&self) -> usize {
+impl Dictionary<ParsedValue, ParsedText, Self, ParsedTable, ParsedComposition, ParsedPattern> for ParsedDictionary {
+
+    type EntryIterator<'b> = EntryIterator<'b>;
+
+    fn len(&self) -> usize {
         self.entries.len()
     }
 
@@ -1389,57 +1262,35 @@ impl Dictionary<ParsedExpression, ParsedText, Self, ParsedTable, ParsedDirective
         self.entries.is_empty()
     }
 
-    fn get_by(&self, key: &str) -> Option<&ParsedExpression> {
-        for entry in &self.entries {
-            if key.eq(entry.0.deref()) {
-                return Some(&entry.1);
-            };
-        };
-        None
-    }
-
-    fn get_at(&self, index: usize) -> Option<(&str, &ParsedExpression)> {
+    fn get_at(&self, index: usize) -> Option<Entry<ParsedValue>> {
         if let Some(entry) = self.entries.get(index) {
-            Some((entry.0.borrow(), &entry.1))
+            Some(Entry(&entry.0, &entry.1))
         } else {
             None
         }
     }
 
-    fn iter_entries(&self) -> Self::EntryIterator<'_> {
-        EntryIterator { iter: self.entries.iter() }
+    fn iter(&self) -> Self::EntryIterator<'_> {
+        EntryIterator(self.entries.iter())
     }
 
 }
 
-pub type EntryIterator<'a> = AttributeIterator<'a>;
+#[derive(Clone)]
+pub struct ParsedEntry(Rc<str>, ParsedValue);
 
-impl ParsedDictionary {
+pub struct EntryIterator<'a>(Iter<'a, ParsedEntry>);
 
-    pub fn empty(from: Position, to: Position) -> Self {
-        ParsedDictionary { entries: vec![], from, to }
-    }
+impl <'a> Iterator for EntryIterator<'a> {
 
-    pub fn get_entry(&self, key: &str) -> Option<(&str, &ParsedExpression)> {
-        for entry in &self.entries {
-            if key.eq(entry.0.deref()) {
-                return Some((&entry.0, &entry.1));
-            };
+    type Item = Entry<'a, ParsedValue>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(c) = self.0.next() {
+            Some(Entry(&c.0, &c.1))
+        } else {
+            None
         }
-        return None;
-    }
-
-    pub fn get(&self, key: &str) -> Option<&ParsedExpression> {
-        for entry in &self.entries {
-            if key.eq(entry.0.deref()) {
-                return Some(&entry.1);
-            };
-        }
-        return None;
-    }
-
-    pub fn size(&self) -> usize {
-        self.entries.len()
     }
 
 }
@@ -1449,20 +1300,27 @@ impl ParsedDictionary {
 /// A parsed table.
 #[derive(Clone)]
 pub struct ParsedTable {
-    pub elements: Vec<ParsedExpression>,
-    pub from: Position,
-    pub to: Position,
+    pub elements: Vec<ParsedValue>,
     pub columns: usize,
 }
 
-impl Table<ParsedExpression, ParsedText, ParsedDictionary, ParsedTable, ParsedDirective, ParsedComponent> for ParsedTable {
+impl ParsedTable {
+
+    /// Empty table.
+    pub fn empty() -> Self {
+        ParsedTable { elements: vec![], columns: 0 }
+    }
+
+}
+
+impl Table<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposition, ParsedPattern> for ParsedTable {
 
     type RowIterator<'b> = RowIterator<'b>;
 
-    type ListIterator<'b> = Iter<'b, ParsedExpression>;
+    type EntryIterator<'b> = Iter<'b, ParsedValue>;
 
-    fn is_empty(&self) -> bool {
-        self.elements.is_empty()
+    fn len(&self) -> usize {
+        self.elements.len()
     }
 
     fn columns(&self) -> usize {
@@ -1477,15 +1335,27 @@ impl Table<ParsedExpression, ParsedText, ParsedDictionary, ParsedTable, ParsedDi
         }
     }
 
-    fn size(&self) -> usize {
-        self.elements.len()
+    fn is_empty(&self) -> bool {
+        self.elements.is_empty()
     }
 
-    fn get(&self, row: usize, column: usize) -> Option<&ParsedExpression> {
+    fn is_list(&self) -> bool {
+        self.columns <= 1
+    }
+
+    fn is_tuple(&self) -> bool {
+        self.rows() <= 1
+    }
+
+    fn get_entry_at(&self, row: usize, column: usize) -> Option<&ParsedValue> {
         self.elements.get(row * self.columns + column)
     }
 
-    fn get_row(&self, row: usize) -> Option<&[ParsedExpression]> {
+    fn get_entry_at_index(&self, index: usize) -> Option<&ParsedValue> {
+        self.elements.get(index)
+    }
+
+    fn get_row_(&self, row: usize) -> Option<&[ParsedValue]> {
         if self.columns != 0 {
             Some(&self.elements[row * self.columns .. row * (self.columns + 1)])
         } else {
@@ -1493,49 +1363,24 @@ impl Table<ParsedExpression, ParsedText, ParsedDictionary, ParsedTable, ParsedDi
         }
     }
 
-    fn iter_rows(&self) -> Self::RowIterator<'_> {
-        RowIterator { columns: self.columns, iter: self.elements.iter() }
-    }
-
-    fn is_list(&self) -> bool {
-        self.columns <= 1
-    }
-
-    fn len_as_list(&self) -> usize {
-        self.elements.len()
-    }
-
-    fn get_list_element(&self, index: usize) -> Option<&ParsedExpression> {
-        self.elements.get(index)
-    }
-
-    fn iter_list_elements(&self) -> Self::ListIterator<'_> {
+    fn iter_entries(&self) -> Self::EntryIterator<'_> {
         self.elements.iter()
     }
 
-    fn is_tuple(&self) -> bool {
-        self.rows() <= 1
-    }
-
-}
-
-impl ParsedTable {
-
-    /// Empty table.
-    pub fn empty(at: Position) -> Self {
-        ParsedTable { elements: vec![], from: at, to: at, columns: 0 }
+    fn iter_rows(&self) -> Self::RowIterator<'_> {
+        RowIterator { columns: self.columns, iter: self.elements.iter() }
     }
 
 }
 
 pub struct RowIterator<'a> {
     columns: usize,
-    iter: Iter<'a, ParsedExpression>,
+    iter: Iter<'a, ParsedValue>,
 }
 
 impl <'a> Iterator for RowIterator<'a> {
 
-    type Item = Box<[&'a ParsedExpression]>;
+    type Item = Box<[&'a ParsedValue]>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut row = vec![];
@@ -1553,29 +1398,95 @@ impl <'a> Iterator for RowIterator<'a> {
 
 }
 
-//// Directive
+//// Composition
 
-/// A parsed directive.
 #[derive(Clone)]
-pub struct ParsedDirective {
-    pub directive: Rc<str>,
-    pub attributes: Vec<(Rc<str>, ParsedExpression)>,
-    pub arguments: Vec<ParsedComponent>,
-    pub from: Position,
-    pub to: Position,
+pub struct ParsedComposition {
+    components: Vec<ParsedValue>,
+    whitespace: Vec<bool>,
 }
 
-impl Directive<ParsedExpression, ParsedText, ParsedDictionary, ParsedTable, Self, ParsedComponent> for ParsedDirective {
+impl ParsedComposition {
 
-    type ArgumentIterator<'b> = Iter<'b, ParsedComponent>;
+}
+
+impl Composition<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, Self, ParsedPattern> for ParsedComposition {
+
+    type ElementIterator<'b> = ElementIterator<'b>;
+
+    fn len(&self) -> usize {
+        self.components.len() + self.whitespace.len()
+    }
+
+    fn get_at(&self, index: usize) -> Option<Element<&ParsedValue>> {
+        None
+        //self.components.get(index) //TODO
+    }
+
+    fn iter(&self) -> Self::ElementIterator<'_> {
+        ElementIterator {
+            components: &self.components,
+            whitespace: &self.whitespace,
+            index: 0,
+            after_component: false,
+        }
+    }
+
+}
+
+pub struct ElementIterator<'b> {
+    components: &'b[ParsedValue],
+    whitespace: &'b[bool],
+    index: usize,
+    after_component: bool,
+}
+
+impl <'b> Iterator for ElementIterator<'b> {
+
+    type Item = Element<&'b ParsedValue>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index != self.components.len() - 1 {
+            if self.after_component {
+                let whitespace = self.whitespace[self.index];
+                self.index += 1;
+                if whitespace {
+                    self.after_component = false;
+                    return Some(Element::Whitespace);
+                };
+            };
+        } else {
+            if self.after_component {
+                return None;
+            };
+        };
+        self.after_component = true;
+        Some(Element::Substance(&self.components[self.index]))
+    }
+
+}
+
+//// Pattern
+
+/// A parsed pattern.
+#[derive(Clone)]
+pub struct ParsedPattern {
+    pub name: Rc<str>,
+    pub attributes: Vec<ParsedAttribute>,
+    pub arguments: Vec<ParsedValue>,
+}
+
+impl Pattern<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposition, Self> for ParsedPattern {
+
+    type ArgumentIterator<'b> = Iter<'b, ParsedValue>;
 
     type AttributeIterator<'b> = AttributeIterator<'b>;
 
-    fn label(&self) -> &str {
-        &self.directive
+    fn name(&self) -> &str {
+        &self.name
     }
 
-    fn length(&self) -> usize {
+    fn len(&self) -> usize {
         self.arguments.len()
     }
 
@@ -1587,22 +1498,28 @@ impl Directive<ParsedExpression, ParsedText, ParsedDictionary, ParsedTable, Self
         !self.arguments.is_empty()
     }
 
-    fn get_argument(&self, index: usize) -> Option<&ParsedComponent> {
+    fn get_argument_at(&self, index: usize) -> Option<&ParsedValue> {
         self.arguments.get(index)
     }
 
-    fn get_attribute(&self, key: &str) -> Option<&ParsedExpression> {
+    fn get_attribute_by_key(&self, key: &str) -> Option<AttributeValue<'_>> {
         for attribute in &self.attributes {
-            if key.eq(attribute.0.deref()) {
-                return Some(&attribute.1);
-            };
-        };
+            if key.eq(attribute.key().deref()) {
+                return match attribute {
+                    ParsedAttribute(_, Some(v)) => Some(AttributeValue(Some(&v))),
+                    ParsedAttribute(_, None) => Some(AttributeValue(None)),
+                };
+            }
+        }
         None
     }
 
-    fn get_attribute_at(&self, index: usize) -> Option<(&str, &ParsedExpression)> {
+    fn get_attribute_at(&self, index: usize) -> Option<Attribute<'_>> {
         if let Some(attribute) = self.attributes.get(index) {
-            Some((attribute.0.borrow(), &attribute.1))
+            match attribute {
+                ParsedAttribute(k, Some(v)) => Some(Attribute(&k, Some(&v))),
+                ParsedAttribute(k, None) => Some(Attribute(&k, None)),
+            }
         } else {
             None
         }
@@ -1618,222 +1535,68 @@ impl Directive<ParsedExpression, ParsedText, ParsedDictionary, ParsedTable, Self
 
 }
 
+#[derive(Clone)]
+pub struct ParsedAttribute(Rc<str>, Option<Rc<str>>);
+
+impl ParsedAttribute {
+
+    fn key(&self) -> Rc<str> {
+        self.0.clone()
+    }
+
+}
+
 pub struct AttributeIterator<'a> {
-    iter: Iter<'a, (Rc<str>, ParsedExpression)>,
+    iter: Iter<'a, ParsedAttribute>,
 }
 
 impl <'a> Iterator for AttributeIterator<'a> {
 
-    type Item = (&'a str, &'a ParsedExpression);
+    type Item = Attribute<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(attribute) = self.iter.next() {
-            Some((&attribute.0, &attribute.1))
+        if let Some(ParsedAttribute(key, value)) = self.iter.next() {
+            if let Some(value) = value {
+                Some(Attribute(key, Some(value)))
+            } else {
+                Some(Attribute(key, None))
+            }
         } else {
             None
         }
-    }
-
-}
-
-impl ParsedDirective {
-
-    pub fn length(&self) -> usize {
-        self.arguments.len()
-    }
-
-    pub fn get(&self, index: usize) -> Option<&ParsedComponent> {
-        self.arguments.get(index)
-    }
-
-}
-
-//// Component
-
-#[derive(Clone)]
-pub enum ParsedComponent {
-    Empty(Position, Position),
-    Text(ParsedText),
-    Table(ParsedTable),
-    Dictionary(ParsedDictionary),
-    Directive(ParsedDirective),
-    Compound(Box<[ParsedComponent]>, Box<[bool]>, Position, Position),
-}
-
-impl ParsedComponent {
-
-    pub fn empty(from: Position, to: Position) -> Self {
-        ParsedComponent::Empty(from, to)
-    }
-
-    pub fn from_components(from: Position, to: Position, mut components: Vec<ParsedComponent>, whitespace: Vec<bool>) -> Self {
-        let len = components.len();
-        if len == 0 {
-            ParsedComponent::Empty(from, to)
-        } else if len == 1 {
-            components.pop().unwrap()
-        } else {
-            assert_eq!(len - 1, whitespace.len());
-            ParsedComponent::Compound(components.into_boxed_slice(), whitespace.into_boxed_slice(), from, to)
-        }
-    }
-
-}
-
-impl Component<ParsedExpression, ParsedText, ParsedDictionary, ParsedTable, ParsedDirective, ParsedComponent> for ParsedComponent {
-
-    fn as_expression(&self) -> &ParsedExpression {
-        ParsedExpression::ref_cast(self)
-    }
-
-    fn as_text(&self) -> Option<&ParsedText> {
-        if let ParsedComponent::Text(t) = self {
-            Some(t)
-        } else {
-            None
-        }
-    }
-
-    fn as_table(&self) -> Option<&ParsedTable> {
-        if let ParsedComponent::Table(t) = self {
-            Some(t)
-        } else {
-            None
-        }
-    }
-
-    fn as_dictionary(&self) -> Option<&ParsedDictionary> {
-        if let ParsedComponent::Dictionary(d) = self {
-            Some(d)
-        } else {
-            None
-        }
-    }
-
-    fn as_directive(&self) -> Option<&ParsedDirective> {
-        if let ParsedComponent::Directive(d) = self {
-            Some(d)
-        } else {
-            None
-        }
-    }
-
-    fn is_text(&self) -> bool {
-        matches!(self, ParsedComponent::Text(..))
-    }
-
-    fn is_table(&self) -> bool {
-        matches!(self, ParsedComponent::Table(..))
-    }
-
-    fn is_dictionary(&self) -> bool {
-        matches!(self, ParsedComponent::Dictionary(..))
-    }
-
-    fn is_directive(&self) -> bool {
-        matches!(self, ParsedComponent::Directive(..))
-    }
-
-}
-
-impl ParsedComponent {
-
-    pub fn from(&self) -> Position {
-        match self {
-            ParsedComponent::Empty(from, ..) => from,
-            ParsedComponent::Text(ParsedText { from, .. }) => from,
-            ParsedComponent::Table(ParsedTable { from, .. }) => from,
-            ParsedComponent::Dictionary(ParsedDictionary { from, .. }) => from,
-            ParsedComponent::Directive(ParsedDirective { from, .. }) => from,
-            ParsedComponent::Compound(_, _, from, _) => from,
-        }.clone()
-    }
-
-    pub fn to(&self) -> Position {
-        match self {
-            ParsedComponent::Empty(.., to) => to,
-            ParsedComponent::Text(ParsedText { to, .. }) => to,
-            ParsedComponent::Table(ParsedTable { to, .. }) => to,
-            ParsedComponent::Dictionary(ParsedDictionary { to, .. }) => to,
-            ParsedComponent::Directive(ParsedDirective { to, .. }) => to,
-            ParsedComponent::Compound(_, _, _, to) => to,
-        }.clone()
-    }
-
-    fn into_expression(self) -> ParsedExpression {
-        ParsedExpression(self)
-    }
-
-}
-
-impl From<ParsedExpression> for ParsedComponent {
-
-    fn from(component: ParsedExpression) -> Self {
-        component.0
-    }
-
-}
-
-impl From<ParsedText> for ParsedComponent {
-
-    fn from(text: ParsedText) -> Self {
-        ParsedComponent::Text(text)
-    }
-
-}
-
-impl From<ParsedTable> for ParsedComponent {
-
-    fn from(sequence: ParsedTable) -> Self {
-        ParsedComponent::Table(sequence)
-    }
-
-}
-
-impl From<ParsedDictionary> for ParsedComponent {
-
-    fn from(dictionary: ParsedDictionary) -> Self {
-        ParsedComponent::Dictionary(dictionary)
-    }
-
-}
-
-impl From<ParsedDirective> for ParsedComponent {
-
-    fn from(command: ParsedDirective) -> Self {
-        ParsedComponent::Directive(command)
     }
 
 }
 
 //// Parsing result formatting
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub enum TokenType {
-    Word, Quote,
-    Colon, Semicolon, Bar, Diamond, Tilde,
+    Whitespace, Word, Quotation, TextBlock,
+    Colon, Semicolon, Bar, Tilde, Diamond,
     LeftBracket, RightBracket, LeftSquare, RightSquare, LeftAngle, RightAngle,
-    Whitespace, End,
+    End,
 }
 
 impl Display for TokenType {
 
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            TokenType::Whitespace => write!(f, "Whitespace"),
             TokenType::Word => write!(f, "Word"),
-            TokenType::Quote => write!(f, "Quote"),
+            TokenType::Quotation => write!(f, "Quotation"),
+            TokenType::TextBlock => write!(f, "TextBlock"),
             TokenType::Colon => write!(f, ":"),
             TokenType::Semicolon => write!(f, ";"),
             TokenType::Bar => write!(f, "|"),
+            TokenType::Tilde => write!(f, "~"),
             TokenType::Diamond => write!(f, "<>"),
             TokenType::LeftBracket => write!(f, "{{"),
             TokenType::RightBracket => write!(f, "}}"),
-            TokenType::Tilde => write!(f, "~"),
             TokenType::LeftSquare => write!(f, "["),
             TokenType::RightSquare => write!(f, "]"),
             TokenType::LeftAngle => write!(f, "<"),
             TokenType::RightAngle => write!(f, ">"),
-            TokenType::Whitespace => write!(f, "Whitespace"),
             TokenType::End => write!(f, "End"),
         }
     }
@@ -1844,26 +1607,23 @@ impl Token {
 
     fn to_type(&self) -> TokenType {
         match self {
+            Token::Whitespace(..) => TokenType::Whitespace,
             Token::Word(..) => TokenType::Word,
-            Token::Quote(..) => TokenType::Quote,
+            Token::Quotation(..) => TokenType::Quotation,
+            Token::TextBlock(..) => TokenType::TextBlock,
             Token::Colon(..) => TokenType::Colon,
             Token::Semicolon(..) => TokenType::Semicolon,
             Token::Bar(..) => TokenType::Bar,
+            Token::Tilde(..) => TokenType::Tilde,
             Token::Diamond(..) => TokenType::Diamond,
             Token::LeftBracket(..) => TokenType::LeftBracket,
             Token::RightBracket(..) => TokenType::RightBracket,
-            Token::Tilde(..) => TokenType::Tilde,
             Token::LeftSquare(..) => TokenType::LeftSquare,
             Token::RightSquare(..) => TokenType::RightSquare,
             Token::LeftAngle(..) => TokenType::LeftAngle,
             Token::RightAngle(..) => TokenType::RightAngle,
-            Token::Whitespace(..) => TokenType::Whitespace,
             Token::End(..) => TokenType::End,
         }
     }
 
-}
-
-pub enum ParseTask {
-    Expression, Dictionary, Table, Directive
 }

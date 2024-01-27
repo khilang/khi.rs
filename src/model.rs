@@ -1,28 +1,28 @@
 //! Plain in-memory Khi structures.
 
-use crate::{Dictionary, Expression, Table};
+use crate::{Dictionary, Pattern, Structure, Table};
 
 pub enum SimpleStructure {
-    Empty,
+    Nil,
     Text(SimpleText),
-    Table(SimpleTable),
     Dictionary(SimpleDictionary),
-    Directive(SimpleDirective),
-    Compound(Vec<SimpleComponent>),
+    Table(SimpleTable),
+    Composition(Vec<SimpleStructure>),
+    Pattern(SimplePattern),
 }
 
-impl Expression<SimpleText, SimpleTable, SimpleDictionary, SimpleDirective, SimpleComponent> for SimpleStructure {
+impl Value<SimpleText, SimpleDictionary, SimpleTable, SimpleComponent, SimplePattern> for SimpleStructure {
 
     type StructureIterator = ();
 
     fn length(&self) -> usize {
         match self {
-            SimpleStructure::Empty => 0,
             SimpleStructure::Text(..) => 1,
             SimpleStructure::Table(..) => 1,
             SimpleStructure::Dictionary(..) => 1,
-            SimpleStructure::Directive(..) => 1,
-            SimpleStructure::Compound(v) => v.len(),
+            SimpleStructure::Pattern(..) => 1,
+            SimpleStructure::Composition(v) => v.len(),
+            SimpleStructure::Nil => 0,
         }
     }
 
@@ -66,15 +66,15 @@ impl Expression<SimpleText, SimpleTable, SimpleDictionary, SimpleDirective, Simp
         todo!()
     }
 
-    fn is_table(&self) -> bool {
-        todo!()
-    }
-
     fn is_dictionary(&self) -> bool {
         todo!()
     }
 
-    fn is_directive(&self) -> bool {
+    fn is_table(&self) -> bool {
+        todo!()
+    }
+
+    fn is_pattern(&self) -> bool {
         todo!()
     }
 
@@ -107,12 +107,9 @@ pub struct SimpleDictionary {
     entries: Vec<(SimpleText, SimpleStructure)>,
 }
 
-/// A simple directive implementation.
-pub struct SimpleDirective {
+/// A simple tag implementation.
+pub struct SimplePattern {
     header: String,
     attributes: Vec<(SimpleText, SimpleStructure)>,
     arguments: Vec<SimpleComponent>
 }
-
-#[repr(transparent)]
-pub struct SimpleComponent(SimpleStructure);

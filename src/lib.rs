@@ -1,5 +1,3 @@
-//! Khi data structures.
-
 extern crate core;
 
 #[cfg(feature = "parse")]
@@ -16,188 +14,197 @@ pub mod html;
 #[cfg(feature = "tex")]
 pub mod tex;
 
-//#[cfg(feature = "serde")]
-//pub mod ser;
-//#[cfg(feature = "serde")]
-//pub mod de;
+#[cfg(feature = "serde")]
+pub mod ser;
+#[cfg(feature = "serde")]
+pub mod de;
+
 //mod fmt;
 //mod model;
 
-/// An expression.
+/// A structure value.
 ///
-/// An expression encodes a data structure. It consists of components which provide
-/// the information needed to reconstruct the data structure.
-pub trait Expression<
-    Ex: Expression<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Tx: Text<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Dc: Dictionary<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Tb: Table<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Dr: Directive<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Cm: Component<Ex, Tx, Dc, Tb, Dr, Cm>,
+/// Corresponds to a real data structure.
+///
+/// Is one of:
+/// - nil
+/// - text
+/// - dictionary
+/// - table
+/// - composition
+/// - pattern
+pub trait Value<
+    Vl: Value<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Tx: Text<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Tb: Table<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Pt: Pattern<Vl, Tx, Dc, Tb, Cm, Pt>,
 > {
-    type ComponentIterator<'a>: Iterator<Item=&'a Cm> where Self: 'a, Cm: 'a;
-    type ComponentIteratorWithWhitespace<'a>: Iterator<Item=WhitespaceOption<&'a Cm>> where Self: 'a, Cm: 'a;
-    /// Number of components the structure consists of.
-    fn length(&self) -> usize;
-    /// Check if this is a structure with 0 components.
-    fn is_empty(&self) -> bool;
-    /// Check if this is a structure with 1 component.
-    fn is_unary(&self) -> bool;
-    /// Check if this is a structure with 2 or more components.
-    fn is_compound(&self) -> bool;
-    /// Get the component at index.
-    fn get(&self, index: usize) -> Option<&Cm>;
-    /// Iterate over the components and the whitespace in the expression.
-    fn iter_components_with_whitespace(&self) -> Self::ComponentIteratorWithWhitespace<'_>;
-    /// Iterate over the components in the expression.
-    fn iter_components(&self) -> Self::ComponentIterator<'_>;
     /// Get as text.
-    fn conform_text(&self) -> Option<&Tx>;
-    /// Get as a table.
-    fn conform_table(&self) -> Option<&Tb>;
+    fn as_text(&self) -> Option<&Tx>;
     /// Get as a dictionary.
-    fn conform_dictionary(&self) -> Option<&Dc>;
-    /// Get as a directive.
-    fn conform_directive(&self) -> Option<&Dr>;
-    /// Get as an expression component.
-    fn as_component(&self) -> &Cm;
-    /// Check if this is a structure with a single text component.
+    fn as_dictionary(&self) -> Option<&Dc>;
+    /// Get as a table.
+    fn as_table(&self) -> Option<&Tb>;
+    /// Get as a composition.
+    fn as_composition(&self) -> Option<&Cm>;
+    /// Get as a pattern.
+    fn as_pattern(&self) -> Option<&Pt>;
+    /// Check if this is nil.
+    fn is_nil(&self) -> bool;
+    /// Check if this is text.
     fn is_text(&self) -> bool;
-    /// Check if this is a structure with a single table component.
-    fn is_table(&self) -> bool;
-    /// Check if this is a structure with a single dictionary component.
+    /// Check if this is a dictionary.
     fn is_dictionary(&self) -> bool;
-    /// Check if this is a structure with a single directive component.
-    fn is_directive(&self) -> bool;
-}
-
-pub enum WhitespaceOption<T> {
-    Component(T),
-    Whitespace,
+    /// Check if this is a table.
+    fn is_table(&self) -> bool;
+    /// Check if this is a composition.
+    fn is_composition(&self) -> bool;
+    /// Check if this is a pattern.
+    fn is_pattern(&self) -> bool;
 }
 
 /// Text.
 pub trait Text<
-    Ex: Expression<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Tx: Text<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Dc: Dictionary<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Tb: Table<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Dr: Directive<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Cm: Component<Ex, Tx, Dc, Tb, Dr, Cm>,
+    Vl: Value<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Tx: Text<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Tb: Table<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Pt: Pattern<Vl, Tx, Dc, Tb, Cm, Pt>,
 > {
     fn as_str(&self) -> &str;
 }
 
 /// A dictionary.
 pub trait Dictionary<
-    Ex: Expression<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Tx: Text<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Dc: Dictionary<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Tb: Table<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Dr: Directive<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Cm: Component<Ex, Tx, Dc, Tb, Dr, Cm>,
+    Vl: Value<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Tx: Text<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Tb: Table<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Pt: Pattern<Vl, Tx, Dc, Tb, Cm, Pt>,
 > {
-    type EntryIterator<'b>: Iterator<Item=(&'b str, &'b Ex)> where Self: 'b, Ex: 'b;
+    type EntryIterator<'b>: Iterator<Item=Entry<'b, Vl>> where Self: 'b, Vl: 'b;
     /// Number of entries in this dictionary.
-    fn length(&self) -> usize;
+    fn len(&self) -> usize;
+    /// Check if this dictionary is empty.
     fn is_empty(&self) -> bool;
-    /// Get value by key. Returns first match.
-    fn get_by(&self, key: &str) -> Option<&Ex>;
-    /// Get value at index.
-    fn get_at(&self, index: usize) -> Option<(&str, &Ex)>;
+    /// Get the entry at an index.
+    fn get_at(&self, index: usize) -> Option<Entry<Vl>>;
     /// Iterate over the entries in this dictionary.
-    fn iter_entries(&self) -> Self::EntryIterator<'_>;
+    fn iter(&self) -> Self::EntryIterator<'_>;
 }
+
+/// A dictionary entry.
+pub struct Entry<'a, St>(&'a str, &'a St);
 
 /// A table.
 pub trait Table<
-    Ex: Expression<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Tx: Text<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Dc: Dictionary<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Tb: Table<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Dr: Directive<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Cm: Component<Ex, Tx, Dc, Tb, Dr, Cm>,
+    Vl: Value<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Tx: Text<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Tb: Table<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Pt: Pattern<Vl, Tx, Dc, Tb, Cm, Pt>,
 > {
-    type RowIterator<'b>: Iterator<Item=Box<[&'b Ex]>> where Self: 'b, Ex: 'b;
-    type ListIterator<'b>: Iterator<Item=&'b Ex> where Self: 'b, Ex: 'b;
-    fn is_empty(&self) -> bool;
-
+    /// Iterator over the rows in a table.
+    type RowIterator<'b>: Iterator<Item=Box<[&'b Vl]>> where Self: 'b, Vl: 'b;
+    /// Iterator over the entries in a table.
+    type EntryIterator<'b>: Iterator<Item=&'b Vl> where Self: 'b, Vl: 'b;
+    /// Number of entries in this table.
+    fn len(&self) -> usize;
     /// Number of columns in this table.
     fn columns(&self) -> usize;
     /// Number of rows in this table.
     fn rows(&self) -> usize;
-    /// Number of cells in this table.
-    fn size(&self) -> usize;
-    fn get(&self, row: usize, column: usize) -> Option<&Ex>;
-    fn get_row(&self, row: usize) -> Option<&[Ex]>;
-    fn iter_rows(&self) -> Self::RowIterator<'_>;
+    /// Check if this table is empty.
+    fn is_empty(&self) -> bool;
     /// Check if this table is a list.
+    ///
     /// A list is a table with a single column.
     fn is_list(&self) -> bool;
-    fn len_as_list(&self) -> usize;
-    fn get_list_element(&self, index: usize) -> Option<&Ex>;
-    fn iter_list_elements(&self) -> Self::ListIterator<'_>;
     /// Check if this table is a tuple.
+    ///
     /// A tuple is a table with a single row.
     fn is_tuple(&self) -> bool;
+    /// Get the entry at
+    fn get_entry_at(&self, row: usize, column: usize) -> Option<&Vl>;
+    ///
+    fn get_entry_at_index(&self, index: usize) -> Option<&Vl>;
+    /// Get the row at an index.
+    fn get_row_(&self, row: usize) -> Option<&[Vl]>;
+    /// Iterate over the entries in this table.
+    fn iter_entries(&self) -> Self::EntryIterator<'_>;
+    /// Iterate over the rows in this table.
+    fn iter_rows(&self) -> Self::RowIterator<'_>;
 }
 
-/// A directive.
-pub trait Directive<
-    Ex: Expression<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Tx: Text<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Dc: Dictionary<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Tb: Table<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Dr: Directive<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Cm: Component<Ex, Tx, Dc, Tb, Dr, Cm>,
+/// A pattern.
+pub trait Pattern<
+    Vl: Value<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Tx: Text<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Tb: Table<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Pt: Pattern<Vl, Tx, Dc, Tb, Cm, Pt>,
 > {
-    type ArgumentIterator<'b>: Iterator<Item=&'b Cm> + 'b where Self: 'b, Cm: 'b;
-    type AttributeIterator<'b>: Iterator<Item=(&'b str, &'b Ex)> + 'b where Self: 'b, Tx: 'b, Ex: 'b;
-    fn label(&self) -> &str;
-    fn length(&self) -> usize;
+    /// Iterator over pattern arguments.
+    type ArgumentIterator<'b>: Iterator<Item=&'b Vl> + 'b where Self: 'b, Vl: 'b;
+    /// Iterator over pattern attributes.
+    type AttributeIterator<'b>: Iterator<Item=Attribute<'b>> + 'b where Self: 'b;
+    /// Name of the pattern.
+    fn name(&self) -> &str;
+    /// Number of arguments.
+    fn len(&self) -> usize;
+    /// Check if this pattern has attributes.
     fn has_attributes(&self) -> bool;
+    /// Check if this pattern has arguments.
     fn has_arguments(&self) -> bool;
-    fn get_argument(&self, index: usize) -> Option<&Cm>;
-    fn get_attribute(&self, key: &str) -> Option<&Ex>;
-    fn get_attribute_at(&self, index: usize) -> Option<(&str, &Ex)>;
+    /// Get the argument at an index.
+    fn get_argument_at(&self, index: usize) -> Option<&Vl>;
+    /// Get the attribute by name.
+    fn get_attribute_by_key(&self, key: &str) -> Option<AttributeValue<'_>>;
+    /// Get the attribute by index.
+    fn get_attribute_at(&self, index: usize) -> Option<Attribute<'_>>;
+    /// Iterate over the arguments of this pattern.
     fn iter_arguments(&self) -> Self::ArgumentIterator<'_>;
+    /// Iterate over the attributes of this pattern.
     fn iter_attributes(&self) -> Self::AttributeIterator<'_>;
 }
 
-/// A component.
+/// An attribute of a pattern.
+pub struct Attribute<'a>(&'a str, Option<&'a str>);
+
+/// An attribute value of a pattern.
+pub struct AttributeValue<'a>(Option<&'a str>);
+
+/// A composition.
 ///
-/// A component is either:
-/// - an expression component
-/// - a text component
-/// - a table component
-/// - a dictionary component
-/// - a directive component
-pub trait Component<
-    Ex: Expression<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Tx: Text<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Dc: Dictionary<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Tb: Table<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Dr: Directive<Ex, Tx, Dc, Tb, Dr, Cm>,
-    Cm: Component<Ex, Tx, Dc, Tb, Dr, Cm>,
+/// Corresponds to a textual composition of multiple data structures.
+pub trait Composition<
+    Vl: Value<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Tx: Text<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Tb: Table<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Pt: Pattern<Vl, Tx, Dc, Tb, Cm, Pt>,
 > {
-    /// Get as a structure.
-    fn as_expression(&self) -> &Ex;
-    /// Get as text.
-    fn as_text(&self) -> Option<&Tx>;
-    /// Get as a table.
-    fn as_table(&self) -> Option<&Tb>;
-    /// Get as a dictionary.
-    fn as_dictionary(&self) -> Option<&Dc>;
-    /// Get as a directive.
-    fn as_directive(&self) -> Option<&Dr>;
-    /// Check if this is a text component or an expression with a single text element.
-    fn is_text(&self) -> bool;
-    /// Check if this is a table component or an expression with a single table element.
-    fn is_table(&self) -> bool;
-    /// Check if this is a dictionary component or an expression with a single dictionary element.
-    fn is_dictionary(&self) -> bool;
-    /// Check if this is a directive component or an expression with a single directive element.
-    fn is_directive(&self) -> bool;
+    /// Iterator over the elements in a composition.
+    type ElementIterator<'a>: Iterator<Item=Element<&'a Vl>> where Self: 'a, Vl: 'a;
+    /// Number of elements in this composition.
+    fn len(&self) -> usize;
+    /// Get the element at an index.
+    fn get_at(&self, index: usize) -> Option<Element<&Vl>>;
+    /// Iterate over the elements in this composition.
+    fn iter(&self) -> Self::ElementIterator<'_>;
+}
+
+/// An element in a composition.
+pub enum Element<T> {
+    Substance(T),
+    Whitespace,
 }
 
 pub fn translate_escape_character(char: char) -> Result<char, ()> {

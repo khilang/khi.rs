@@ -1,3 +1,4 @@
+use std::ops::Deref;
 use crate::translate_escape_character;
 
 //// Position
@@ -12,23 +13,21 @@ pub struct Position { pub index: usize, pub line: usize, pub column: usize }
 
 #[derive(PartialEq, Eq, Clone)]
 pub enum Token {
-    /// A Word token.
-    Word(Position, String),
-    /// A sequence of whitespace.
     Whitespace(Position),
-    Quote(Position, String),
+    Word(Position, String),
+    Quotation(Position, String),
+    TextBlock(Position, String),
     Colon(Position),
     Semicolon(Position),
-    /// A `|` token.
     Bar(Position),
     Tilde(Position),
+    Diamond(Position),
     LeftBracket(Position),
     RightBracket(Position),
     LeftSquare(Position),
     RightSquare(Position),
     LeftAngle(Position),
     RightAngle(Position),
-    Diamond(Position),
     End(Position),
 }
 
@@ -36,8 +35,10 @@ impl Token {
 
     pub fn position(&self) -> Position {
         match self {
+            Token::Whitespace(at) => *at,
             Token::Word(at, ..) => *at,
-            Token::Quote(at, ..) => *at,
+            Token::Quotation(at, ..) => *at,
+            Token::TextBlock(at, ..) => *at,
             Token::Colon(at) => *at,
             Token::Semicolon(at) => *at,
             Token::Bar(at) => *at,
@@ -49,7 +50,6 @@ impl Token {
             Token::RightSquare(at) => *at,
             Token::LeftAngle(at) => *at,
             Token::RightAngle(at) => *at,
-            Token::Whitespace(at) => *at,
             Token::End(at) => *at,
         }
     }
@@ -128,6 +128,8 @@ pub enum LexError {
     UnclosedQuote(Position),
     UnknownEscapeSequence(Position),
     InvalidHashSequence(Position),
+    EndInTag(Position),
+    InvalidMultilineQuoteConfiguration(Position),
 }
 
 /// Iterates over characters and produces tokens.
@@ -163,14 +165,8 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
                         tokens.push(Token::Diamond(at));
                     } else if d == '#' { // Multiline quote
                         let at = iter.position();
-                        iter.next_two();
-                        if let Some('>') = iter.c { // todo: allow labels
-                            iter.next();
-                            let quote = lex_multiline_quote(&mut iter, at)?;
-                            tokens.push(quote);
-                        } else {
-                            return Err(LexError::InvalidHashSequence(at));
-                        };
+                        let quote = lex_multiline_quote(&mut iter, at)?;
+                        tokens.push(quote);
                     } else { // Left angle
                         let at = iter.position();
                         iter.next();
@@ -191,7 +187,7 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
                     tokens.push(Token::RightAngle(at));
                 };
             } else if c == '"' { // Quote
-                let token = lex_quote(&mut iter)?;
+                let token = lex_inline_quote(&mut iter)?;
                 tokens.push(token);
             } else if c == ':' {
                 if let Some(':') = iter.d { // Repeated escape sequence
@@ -362,10 +358,10 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
     Ok(Token::Word(at, string))
 }
 
-/// Lex quoted text.
+/// Lex an inline quote.
 ///
 /// Assumes that the current character is at the opening quote.
-fn lex_quote<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token, LexError> {
+fn lex_inline_quote<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token, LexError> {
     let at = iter.position();
     let mut string = String::new();
     iter.next();
@@ -384,6 +380,8 @@ fn lex_quote<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token
                 } else {
                     return Err(LexError::EscapeEOS);
                 };
+            } else if c == '\n' {
+                return Err(LexError::UnclosedQuote(iter.position()));
             } else {
                 iter.next();
                 string.push(c);
@@ -393,105 +391,117 @@ fn lex_quote<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token
         };
     };
     iter.next();
-    Ok(Token::Quote(at, string))
+    Ok(Token::Quotation(at, string))
 }
 
-/// Lex a multiline quote. // todo: Fix spaghetti
+/// Lex a multiline quote.
+///
+/// Assumes that the current characters are `<#`.
 fn lex_multiline_quote<It: Iterator<Item = char>>(iter: &mut CharIter<It>, at: Position) -> Result<Token, LexError> {
-    loop { // Ignore the line after the quote opening, unless there are glyphs there.
+    let mut closing = String::new();
+    let mut config = vec![];
+    let mut quote = String::new();
+    iter.next_two();
+    closing.push('<');
+    closing.push('#');
+    'tag: loop {
         if let Some(c) = iter.c {
-            if c == '\n' {
+            if c == '>' {
                 iter.next();
+                closing.push('>');
                 break;
             } else if c.is_whitespace() {
-                iter.next();
-            } else {
-                break;
-            };
-        } else {
-            return Err(LexError::UnclosedQuote(iter.position()));
-        };
-    };
-    let mut read = true;
-    let mut lines = vec![];
-    let mut least_indentation = usize::MAX;
-    'a: while read {
-        loop { // Skip whitespace at start of line.
-            if let Some(c) = iter.c {
-                if c == '\n' {
-                    iter.next();
-                    lines.push((String::new(), 0));
-                    continue 'a;
-                } else if c.is_whitespace() {
-                    iter.next();
-                } else {
-                    break;
-                };
-            } else {
-                return Err(LexError::UnclosedQuote(iter.position()));
-            };
-        };
-        let indentation = iter.column;
-        let mut line = String::new();
-        loop {
-            if let Some(c) = iter.c {
-                if c == '\n' {
-                    iter.next();
-                    break;
-                } else if c == '<' {
-                    iter.next();
+                closing.push('>');
+                skip_whitespace_in_quote_tag(iter, at)?;
+                loop { // Read configuration
                     if let Some(c) = iter.c {
-                        if c == '#' {
+                        if c == 'f' || c == 'h' || c == 'x' || c == 't' || c == 'l' || c == 'n' || c == 'r' {
                             iter.next();
-                            if let Some(c) = iter.c {
-                                if c == '>' {
-                                    iter.next();
-                                    read = false;
-                                    break;
-                                } else {
-                                    line.push('<');
-                                    line.push('#');
-                                };
-                            } else {
-                                return Err(LexError::UnclosedQuote(iter.position()));
-                            };
+                            config.push(c);
+                        } else if c == '>' {
+                            iter.next();
+                            break 'tag;
+                        } else if c.is_whitespace() {
+                            break;
                         } else {
-                            line.push('<');
-                        };
+                            return Err(LexError::InvalidMultilineQuoteConfiguration(iter.position()))
+                        }
                     } else {
-                        return Err(LexError::UnclosedQuote(iter.position()));
-                    };
-                } else {
-                    iter.next();
-                    line.push(c);
-                };
+                        return Err(LexError::EndInTag(iter.position()));
+                    }
+                }
+                skip_whitespace_in_quote_tag(iter, at)?;
+                if let Some(c) = iter.c {
+                    if c == '>' {
+                        iter.next();
+                        break 'tag;
+                    } else {
+
+                    }
+                }
             } else {
-                return Err(LexError::UnclosedQuote(iter.position()));
-            };
-        };
-        if line.is_empty() {
-            if read {
-                lines.push((line, 0));
+                iter.next();
+                closing.push(c);
             }
         } else {
-            if indentation < least_indentation {
-                least_indentation = indentation;
-            };
-            lines.push((line, indentation));
-        };
-    };
-    let mut quote = String::new();
-    for (l, i) in lines {
-        if i == 0 { // Empty line.
-            quote.push('\n');
-            continue;
+            return Err(LexError::EndInTag(iter.position()));
+        }
+    }
+    // Read content.
+    loop {
+        if let Some(c) = iter.c {
+            quote.push(c);
+            iter.next();
+            if quote.ends_with(closing.deref()) {
+                quote = quote.replace(closing.deref(), "");
+                break;
+            }
         } else {
-            for _ in 0..(i - least_indentation) {
-                quote.push(' ');
-            };
-            quote.push_str(&l);
-            quote.push('\n');
-        };
-    };
-    Ok(Token::Quote(at, quote))
+            return Err(LexError::UnclosedQuote(iter.position()));
+        }
+    }
+    // Process content //TODO
+    // for f in config {
+    //     if f == 'f' {
+    //         quote = quote.replace("^[ \t\r]*$", "");
+    //     } else if f == 'h' {
+    //         quote = quote.replace("^[ \t\r]*\n", "");
+    //     } else if f == 'x' {
+    //         let mut i = Vec::new();
+    //         let lines = quote.lines();
+    //         for c in lines.next() {
+    //             if c == ' ' || c == '\t' || c == '\r' {
+    //                 i.push(c);
+    //             } else {
+    //                 break;
+    //             }
+    //         }
+    //         for l in lines {
+    //             for c in l {
+    //
+    //             }
+    //         }
+    //         quote = quote.replace("^")
+    //     } else if f == 't' {
+    //         quote = quote.replace("[ \t\r]*\n", "\n");
+    //     } else if f == 'l' {
+    //         quote = quote.replace("\n[ \t\r]*", "\n");
+    //     } else if f == 'n' {
+    //         quote = quote.replace('\n', "");
+    //     }
+    // }
+    Ok(Token::TextBlock(at, quote))
+}
+
+fn skip_whitespace_in_quote_tag<It: Iterator<Item = char>>(iter: &mut CharIter<It>, at: Position) -> Result<(), LexError> {
+    loop { // Skip whitespace
+        iter.next();
+        if let Some(c) = iter.c {
+            if !c.is_whitespace() {
+                return Ok(());
+            }
+        } else {
+            return Err(LexError::EndInTag(iter.position()));
+        }
+    }
 }

@@ -10,7 +10,7 @@ use serde::de::value::StrDeserializer;
 use crate::{Component, Dictionary, Directive, Expression, Table, Text};
 use crate::enc::{DecodeTextExt, normalize_number_str};
 use crate::model::SimpleStructure;
-use crate::parse::{parse_nullable_dictionary, parse_structure, parse_table, ParsedExpression, ParseError};
+use crate::parse::{parse_expression_str, parse_dictionary_str, parse_table_str, ParsedValue, ParseError};
 
 /// Deserialize a Khi structure string.
 pub fn from_structure_str<T: Deserialize>(str: &str) -> Result<T> {
@@ -151,14 +151,14 @@ impl serde::de::Error for Error {
 }
 
 pub struct StructureDeserializer<'a,
-    St: Expression<Tx, Tb, Dc, Dr, Cm>,
-    Tx: Text<St, Tb, Dc, Dr, Cm>,
-    Tb: Table<St, Tx, Dc, Dr, Cm>,
-    Dc: Dictionary<St, Tx, Tb, Dr, Cm>,
-    Dr: Directive<St, Tx, Tb, Dc, Cm>,
-    Cm: Component<St, Tx, Tb, Dc, Dr>,
+    Vl: Value<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Tx: Text<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Tb: Table<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Cm: Component<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Pt: Pattern<Vl, Tx, Dc, Tb, Cm, Pt>,
 > {
-    structure: &'a St,
+    value: &'a Vl,
 }
 
 impl <'a,
@@ -171,7 +171,7 @@ impl <'a,
 > StructureDeserializer<St, Tx, Tb, Dc, Dr, Cm> {
 
     pub fn new(structure: &'a St) -> Self {
-        Self { structure }
+        Self { value: structure }
     }
 
 }
@@ -208,7 +208,7 @@ impl <'de,
     }
 
     fn deserialize_bool<V>(self, visitor: V) -> Result<V::Value> where V: Visitor<'de> {
-        if let Some(text) = self.structure.conform_text() {
+        if let Some(text) = self.value.conform_text() {
             if text.eq("1") {
                 visitor.visit_bool(true)
             } else if text.eq("0") {
@@ -263,7 +263,7 @@ impl <'de,
 
     //todo +
     fn deserialize_char<V>(self, visitor: V) -> Result<V::Value> where V: Visitor<'de> {
-        if let Some(char) = self.structure.conform_text() {
+        if let Some(char) = self.value.conform_text() {
             let char = char.as_str();
             let mut chars = char.chars();
             let char = if let Some(char) = chars.next() {
@@ -282,7 +282,7 @@ impl <'de,
 
     //todo +
     fn deserialize_str<V>(self, visitor: V) -> Result<V::Value> where V: Visitor<'de> {
-        if let Some(str) = self.structure.conform_text() {
+        if let Some(str) = self.value.conform_text() {
             let str = str.as_str();
             visitor.visit_str(str)
         } else {
@@ -292,7 +292,7 @@ impl <'de,
 
     //todo +
     fn deserialize_string<V>(self, visitor: V) -> Result<V::Value> where V: Visitor<'de> {
-        if let Some(string) = self.structure.conform_text() {
+        if let Some(string) = self.value.conform_text() {
             let string = String::from(string.as_str());
             visitor.visit_string(string)
         } else {
@@ -302,7 +302,7 @@ impl <'de,
 
     //todo +
     fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value> where V: Visitor<'de> {
-        if let Some(hex) = self.structure.conform_text() {
+        if let Some(hex) = self.value.conform_text() {
             let hex = hex.as_str();
             let bytes = match hex::decode(hex) {
                 Ok(b) => b,
@@ -316,7 +316,7 @@ impl <'de,
 
     //todo +
     fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value> where V: Visitor<'de> {
-        if let Some(hex) = self.structure.conform_text() {
+        if let Some(hex) = self.value.conform_text() {
             let hex = hex.as_str();
             let bytes = match hex::decode(hex) {
                 Ok(b) => b,
@@ -331,7 +331,7 @@ impl <'de,
     // `Some(a)` is encoded as `<?>:a` and `None` is encoded as `<?>`.
     //todo +
     fn deserialize_option<V>(self, visitor: V) -> Result<V::Value> where V: Visitor<'de> {
-        if let Some(option) = self.structure.conform_directive() {
+        if let Some(option) = self.value.conform_directive() {
             let label = &option.label;
             if !label.eq("?") {
                 return Err(Error::InvalidOptionDirectiveLabel);
@@ -344,7 +344,7 @@ impl <'de,
                 visitor.visit_none()
             } else if len == 1 {
                 let content = option.get(0).unwrap().as_structure();
-                let deserializer = StructureDeserializer { structure: content };
+                let deserializer = StructureDeserializer { value: content };
                 visitor.visit_some(deserializer)
             } else {
                 Err(Error::InvalidOptionDirectiveArguments)
@@ -356,7 +356,7 @@ impl <'de,
 
     // todo +
     fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value> where V: Visitor<'de> {
-        if !self.structure.is_empty() {
+        if !self.value.is_empty() {
             return Err(Error::InvalidUnitStructure);
         };
         visitor.visit_unit()
@@ -364,11 +364,11 @@ impl <'de,
 
     //todo +
     fn deserialize_unit_struct<V>(self, name: &'static str, visitor: V) -> Result<V::Value> where V: Visitor<'de> {
-        let len = self.structure.length();
+        let len = self.value.length();
         if len == 0 {
             visitor.visit_unit()
         } else if len == 1 {
-            if let Some(text) = self.structure.conform_text() {
+            if let Some(text) = self.value.conform_text() {
                 let mName = text.as_str();
                 if name.eq(mName) {
                     visitor.visit_unit()
@@ -390,7 +390,7 @@ impl <'de,
 
     //todo +
     fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value> where V: Visitor<'de> {
-        if let Some(table) = self.structure.conform_table() {
+        if let Some(table) = self.value.conform_table() {
             if table.is_list() {
                 visitor.visit_seq(TableAccess { iter: table.iter() })
             } else {
@@ -403,7 +403,7 @@ impl <'de,
 
     //todo +
     fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value> where V: Visitor<'de> {
-        if let Some(table) = self.structure.conform_table() {
+        if let Some(table) = self.value.conform_table() {
             if table.is_tuple() {
                 visitor.visit_seq(TableAccess { iter: table.iter() })
             } else {
@@ -416,16 +416,16 @@ impl <'de,
 
     //todo +
     fn deserialize_tuple_struct<V>(self, name: &'static str, len: usize, visitor: V) -> Result<V::Value> where V: Visitor<'de> {
-        let len = self.structure.length();
+        let len = self.value.length();
         if len == 1 {
             self.deserialize_tuple(visitor)
         } else if len == 2 {
-            let c0 = self.structure.get(0).unwrap();
+            let c0 = self.value.get(0).unwrap();
             if let Some(c0) = c0.as_text() {
                 let c0 = c0.as_str();
                 if name.eq(c0) {
-                    let c1 = self.structure.get(1).unwrap().as_expression();
-                    let deserializer = StructureDeserializer { structure: c1 };
+                    let c1 = self.value.get(1).unwrap().as_expression();
+                    let deserializer = StructureDeserializer { value: c1 };
                     deserializer.deserialize_tuple(visitor)
                 } else {
                     Err(Error::StructNameMismatch)
@@ -440,7 +440,7 @@ impl <'de,
 
     //todo +
     fn deserialize_map<V>(self, visitor: V) -> Result<V::Value> where V: Visitor<'de> {
-        if let Some(dictionary) = self.structure.conform_dictionary() {
+        if let Some(dictionary) = self.value.conform_dictionary() {
             visitor.visit_map(DictionaryAccess { iter: dictionary.iter(), current: None })
         } else {
             Err(Error::InvalidMapStructure)
@@ -449,16 +449,16 @@ impl <'de,
 
     //todo +
     fn deserialize_struct<V>(self, name: &'static str, fields: &'static [&'static str], visitor: V) -> Result<V::Value> where V: Visitor<'de> {
-        let len = self.structure.length();
+        let len = self.value.length();
         if len == 1 {
             self.deserialize_map(visitor)
         } else if len == 2 {
-            let c0 = self.structure.get(0).unwrap();
+            let c0 = self.value.get(0).unwrap();
             if let Some(c0) = c0.as_text() {
                 let c0 = c0.as_str();
                 if c0.eq(name) {
-                    let c1 = self.structure.get(1).unwrap().as_expression();
-                    let deserializer = StructureDeserializer { structure: c1 };
+                    let c1 = self.value.get(1).unwrap().as_expression();
+                    let deserializer = StructureDeserializer { value: c1 };
                     deserializer.deserialize_map(visitor)
                 } else {
                     Err(Error::StructNameMismatch)
@@ -473,13 +473,13 @@ impl <'de,
 
     //todo +
     fn deserialize_enum<V>(self, name: &'static str, variants: &'static [&'static str], visitor: V) -> Result<V::Value> where V: Visitor<'de> {
-        let len = self.structure.length();
+        let len = self.value.length();
         let content;
         if len == 1 {
-            content = self.structure.get(0).unwrap();
+            content = self.value.get(0).unwrap();
         } else if len == 2 {
-            content = self.structure.get(1).unwrap();
-            let found_name = self.structure.get(0).unwrap();
+            content = self.value.get(1).unwrap();
+            let found_name = self.value.get(0).unwrap();
             if let Some(found_name) = found_name.as_text() {
                 let found_name = found_name.as_str();
                 if !name.eq(found_name) {
@@ -576,7 +576,7 @@ impl <'de,
 
     fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value> where V: DeserializeSeed<'de> {
         if let Some((_, v)) = self.current {
-            let deserializer = StructureDeserializer { structure: v };
+            let deserializer = StructureDeserializer { value: v };
             seed.deserialize(deserializer)
         } else {
             Ok(None)
@@ -587,7 +587,7 @@ impl <'de,
         self.current = self.iter.next();
         if let Some((k, v)) = self.current {
             let kdeserializer = StrDeserializer::new(k);
-            let vdeserializer = StructureDeserializer { structure: v };
+            let vdeserializer = StructureDeserializer { value: v };
             Ok(Some((kseed.deserialize(kdeserializer), vseed.deserialize(vdeserializer))))
         } else {
             Ok(None)
@@ -629,7 +629,7 @@ impl <'de, S: Expression<_, _, _, _, _>> serde::de::VariantAccess for EnumAccess
 
     fn newtype_variant_seed<T>(self, seed: T) -> Result<T::Value> where T: DeserializeSeed<'de> {
         if let Some(inner) = self.content {
-            let inner = StructureDeserializer { structure: inner };
+            let inner = StructureDeserializer { value: inner };
             seed.deserialize(inner)
         } else {
             Err(Error::InvalidEnumStructure)
@@ -638,7 +638,7 @@ impl <'de, S: Expression<_, _, _, _, _>> serde::de::VariantAccess for EnumAccess
 
     fn tuple_variant<V>(self, len: usize, visitor: V) -> Result<V::Value> where V: Visitor<'de> {
         if let Some(inner) = self.content {
-            let inner = StructureDeserializer { structure: inner };
+            let inner = StructureDeserializer { value: inner };
             inner.deserialize_seq(visitor)
         } else {
             Err(Error::InvalidEnumStructure)
@@ -647,7 +647,7 @@ impl <'de, S: Expression<_, _, _, _, _>> serde::de::VariantAccess for EnumAccess
 
     fn struct_variant<V>(self, fields: &'static [&'static str], visitor: V) -> Result<V::Value> where V: Visitor<'de> {
         if let Some(inner) = self.content {
-            let inner = StructureDeserializer { structure: inner };
+            let inner = StructureDeserializer { value: inner };
             inner.deserialize_seq(visitor)
         } else {
             Err(Error::InvalidEnumStructure)

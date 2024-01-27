@@ -4,7 +4,7 @@ use std::env;
 use std::fs::File;
 use std::io::Read;
 use khi::html::{PreprocessorError, write_html};
-use khi::parse::{error_to_string, parse_expression_document};
+use khi::parse::{error_to_string, parse_expression_str};
 
 fn main() {
     match preprocess() {
@@ -21,7 +21,7 @@ fn preprocess() -> Result<String, String> {
         let mut source = String::new();
         file.read_to_string(&mut source).unwrap();
         print!("Preprocessing document of size: {}\n\n", source.len());
-        let parse = match parse_expression_document(&source) {
+        let parse = match parse_expression_str(&source) {
             Ok(parse) => parse,
             Err(error) => return Err(error_to_string(&error)),
         };
@@ -29,14 +29,14 @@ fn preprocess() -> Result<String, String> {
             Ok(o) => Ok(o),
             Err(e) => {
                 Err(match e {
-                    PreprocessorError::IllegalSequence(at) => {
+                    PreprocessorError::IllegalTable(at) => {
                         format!("Illegal sequence at {}:{}.", at.line, at.column)
                     }
                     PreprocessorError::IllegalDictionary(at) => {
                         format!("Expected dictionary at {}:{}.", at.line, at.column)
                     }
                     PreprocessorError::Custom(error) => error,
-                    PreprocessorError::TooManyTagArguments(at) => {
+                    PreprocessorError::TooManyArguments(at) => {
                         format!("Tag at {}:{} has more than one argument.", at.line, at.column)
                     }
                     PreprocessorError::IllegalAttributeValue(name, at) => {

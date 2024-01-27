@@ -1,12 +1,12 @@
 use std::ops::Deref;
-use crate::{Component, Dictionary, Directive, Expression, Text, WhitespaceOption};
+use crate::{Dictionary, Pattern, Value, Text, Element, Entry, Attribute, Composition};
 use crate::lex::Position;
-use crate::parse::{ParsedComponent, ParsedDictionary, ParsedDirective, ParsedExpression};
+use crate::parse::{ParsedComposition, ParsedDictionary, ParsedPattern, ParsedValue};
 
-pub fn write_html(expression: &ParsedExpression) -> Result<String, PreprocessorError> {
+pub fn write_html(value: &ParsedValue) -> Result<String, PreprocessorError> {
     let mut output = String::new();
     let mut writer = XmlWriter { output: &mut output, column: 1, newline: 60, last: LastType::Whitespace, };
-    writer.write_inner(expression)?;
+    writer.write_inner(value)?;
     Ok(output)
 }
 
@@ -67,50 +67,51 @@ impl XmlWriter<'_> {
         }
     }
 
-    fn write_inner(&mut self, expression: &ParsedExpression) -> Result<(), PreprocessorError> {
-        for component in expression.iter_components_with_whitespace() {
-            match component {
-                WhitespaceOption::Component(ParsedComponent::Empty(..)) => {}
-                WhitespaceOption::Component(ParsedComponent::Text(text)) => {
-                    self.push_str(text.as_str());
-                }
-                WhitespaceOption::Component(ParsedComponent::Dictionary(dictionary)) => {
-                    self.write_dictionary(dictionary)?;
-                }
-                WhitespaceOption::Component(ParsedComponent::Table(table)) => {
-                    return Err(PreprocessorError::IllegalSequence(table.from));
-                }
-                WhitespaceOption::Component(ParsedComponent::Directive(directive)) => {
-                    self.write_tag(directive)?;
-                }
-                WhitespaceOption::Component(compound) => {
-                    self.write_inner(compound.as_expression())?;
-                }
-                WhitespaceOption::Whitespace => {
-                    self.push_whitespace();
+    fn write_inner(&mut self, value: &ParsedValue) -> Result<(), PreprocessorError> {
+        match value {
+            ParsedValue::Nil(..) => {}
+            ParsedValue::Text(text, ..) => {
+                self.push_str(text.as_str());
+            }
+            ParsedValue::Dictionary(dictionary, from, to) => {
+                self.write_dictionary(dictionary, *from)?;
+            }
+            ParsedValue::Table(table, from, to) => {
+                return Err(PreprocessorError::IllegalTable(*from));
+            }
+            ParsedValue::Pattern(directive, from, to) => {
+                self.write_tag(directive, *from)?;
+            }
+            ParsedValue::Composition(composition, from, to) => {
+                for element in composition.iter() {
+                    if let Element::Substance(value) = element {
+                        self.write_inner(value)?;
+                    } else {
+                        self.push_whitespace();
+                    }
                 }
             }
         }
         Ok(())
     }
 
-    fn write_tag(&mut self, command: &ParsedDirective) -> Result<(), PreprocessorError> {
-        let name = &command.directive;
+    fn write_tag(&mut self, pattern: &ParsedPattern, at: Position) -> Result<(), PreprocessorError> {
+        let name = &pattern.name;
         // Macro // todo: set up arbitrary macro names.
-        if name.starts_with('@') {
-            return if name.deref() == "@doctype" {
-                if !command.attributes.is_empty() || command.arguments.len() != 1 {
+        if name.ends_with('!') {
+            return if name.deref() == "doctype!" {
+                if !pattern.attributes.is_empty() || pattern.arguments.len() != 1 {
                     return Err(PreprocessorError::Custom(format!("@doctype macro cannot have attributes and must have 1 argument.")))
                 }
-                let arg = command.arguments.get(0).unwrap();
+                let arg = pattern.arguments.get(0).unwrap();
                 self.push_str_non_breaking("<!DOCTYPE ");
                 self.push_str_non_breaking(arg.as_text().unwrap().as_str());
                 self.push_str_non_breaking(">");
                 Ok(())
-            } else if name.deref() == "@raw" {
-                if let Some(arg) = command.get(0) {
+            } else if name.deref() == "raw!" {
+                if let Some(arg) = pattern.get(0) {
                     if let Some(text) = arg.as_text() {
-                        self.output.push_str(text.as_str());
+                        self.output.push_str(text.get_str());
                         Ok(())
                     } else {
                         Err(PreprocessorError::Custom(format!("@raw can only take a text argument.")))
@@ -123,26 +124,24 @@ impl XmlWriter<'_> {
             };
         };
         // Tag
-        let argument = if command.arguments.len() == 0 {
+        let argument = if pattern.arguments.len() == 0 {
             None // Self closing tag
-        } else if command.arguments.len() == 1 {
-            command.arguments.get(0) // Regular tag
+        } else if pattern.arguments.len() == 1 {
+            pattern.arguments.get(0) // Regular tag
         } else {
-            return Err(PreprocessorError::TooManyTagArguments(command.from));
+            return Err(PreprocessorError::TooManyArguments(at));
         };
         self.push_non_breaking('<');
         self.push_str_non_breaking(&name);
-        for attribute in command.iter_attributes() {
-            let key = attribute.0;
-            let value = attribute.1;
+        for Attribute(key, value) in pattern.iter_attributes() {
             match value.as_component() {
-                ParsedComponent::Empty(..) => {
+                None => {
                     self.push_non_breaking(' ');
-                    self.push_str_non_breaking(key);
+                    self.push_str_non_breaking(key.as_str());
                 }
-                ParsedComponent::Text(value) => {
+                Some(value) => {
                     self.push_non_breaking(' ');
-                    self.push_str_non_breaking(key);
+                    self.push_str_non_breaking(key.as_str());
                     self.push_str_non_breaking("=\"");
                     self.push_str_non_breaking(value.as_str());
                     self.push_non_breaking('"');
@@ -152,7 +151,7 @@ impl XmlWriter<'_> {
         }
         self.push_non_breaking('>');
         if let Some(argument) = argument {
-            self.write_inner(argument.as_expression())?;
+            self.write_inner(argument.as_composite())?;
         } else {
             return Ok(());
         };
@@ -162,14 +161,14 @@ impl XmlWriter<'_> {
         Ok(())
     }
 
-    fn write_dictionary(&mut self, dictionary: &ParsedDictionary) -> Result<(), PreprocessorError> {
-        for (key, value) in dictionary.iter_entries() {
+    fn write_dictionary(&mut self, dictionary: &ParsedDictionary, at: Position) -> Result<(), PreprocessorError> {
+        for Entry(key, value) in dictionary.iter() {
             self.push_non_breaking('<');
-            self.push_str_non_breaking(key);
+            self.push_str_non_breaking(key.as_str());
             self.push_non_breaking('>');
             self.write_inner(value)?;
             self.push_str_non_breaking("</");
-            self.push_str_non_breaking(key);
+            self.push_str_non_breaking(key.as_str());
             self.push_non_breaking('>');
         }
         Ok(())
@@ -178,9 +177,9 @@ impl XmlWriter<'_> {
 }
 
 pub enum PreprocessorError {
-    IllegalSequence(Position),
     IllegalDictionary(Position),
+    IllegalTable(Position),
     Custom(String),
-    TooManyTagArguments(Position),
+    TooManyArguments(Position),
     IllegalAttributeValue(String, Position),
 }
