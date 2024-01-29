@@ -173,9 +173,7 @@
 ### Multiline pattern within expression
 <P>:a:{b b}:{
   c c c
-}:[
-  d d d
-]
+}
 
 ## Expressions
 
@@ -196,10 +194,8 @@
 <P> : a : b b : c
 
 ### Multiline pattern constructor
-<P> : a : b b : {
-  c c c
-} : [
-  d d d
+<P> : a : b b b b : [
+  c c c c c
 ]
 
 ### Singleline tuple constructor
@@ -207,12 +203,7 @@ a a a : b b : c c c c c : d : e e e
 
 ### Multiline tuple constructor
 a a a : {b b b} : c : d d : {
-  e e e
-  e e e e
-} : {
-  f f f f f
-} : [
   g g
   g g
   g g g
-]
+}
