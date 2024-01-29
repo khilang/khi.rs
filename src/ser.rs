@@ -27,20 +27,20 @@ pub fn to_string<T: Serialize>(t: T) -> Result<String> {
 
 trait SerializeStructure: Serialize {
 
-    fn serialize_as_auk_structure(&self) -> impl Expression<_, _, _, _, _>;
+    fn serialize_as_structure(&self) -> impl Expression<_, _, _, _, _>;
 
-    fn serialize_to_auk_string(&self) -> String;
+    fn serialize_to_string(&self) -> String;
 
 }
 
 impl <S: Serialize> SerializeStructure for S {
 
-    fn serialize_as_auk_structure(&self) -> impl Expression<_, _, _, _, _> {
+    fn serialize_as_structure(&self) -> impl Expression<_, _, _, _, _> {
         input.serialize(StructureSerializer::new())
     }
 
-    fn serialize_to_auk_string(&self) -> String {
-        self.serialize_as_auk_structure().encode()
+    fn serialize_to_string(&self) -> String {
+        self.serialize_as_structure().encode()
     }
 
 }

@@ -155,7 +155,7 @@ pub struct StructureDeserializer<'a,
     Tx: Text<Vl, Tx, Dc, Tb, Cm, Pt>,
     Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Pt>,
     Tb: Table<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Cm: Component<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Pt>,
     Pt: Pattern<Vl, Tx, Dc, Tb, Cm, Pt>,
 > {
     value: &'a Vl,
@@ -166,8 +166,8 @@ impl <'a,
     Tx: Text<St, Tb, Dc, Dr, Cm>,
     Tb: Table<St, Tx, Dc, Dr, Cm>,
     Dc: Dictionary<St, Tx, Tb, Dr, Cm>,
-    Dr: Directive<St, Tx, Tb, Dc, Cm>,
-    Cm: Component<St, Tx, Tb, Dc, Dr>,
+    Cm: Composition<St, Tx, Tb, Dc, Dr>,
+    Dr: Pattern<St, Tx, Tb, Dc, Cm>,
 > StructureDeserializer<St, Tx, Tb, Dc, Dr, Cm> {
 
     pub fn new(structure: &'a St) -> Self {

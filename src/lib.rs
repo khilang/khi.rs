@@ -14,10 +14,10 @@ pub mod html;
 #[cfg(feature = "tex")]
 pub mod tex;
 
-#[cfg(feature = "serde")]
-pub mod ser;
-#[cfg(feature = "serde")]
-pub mod de;
+//#[cfg(feature = "serde")]
+//pub mod ser;
+//#[cfg(feature = "serde")]
+//pub mod de;
 
 //mod fmt;
 //mod model;
@@ -92,7 +92,7 @@ pub trait Dictionary<
     /// Check if this dictionary is empty.
     fn is_empty(&self) -> bool;
     /// Get the entry at an index.
-    fn get_at(&self, index: usize) -> Option<Entry<Vl>>;
+    fn get(&self, index: usize) -> Option<Entry<Vl>>;
     /// Iterate over the entries in this dictionary.
     fn iter(&self) -> Self::EntryIterator<'_>;
 }
@@ -129,12 +129,10 @@ pub trait Table<
     ///
     /// A tuple is a table with a single row.
     fn is_tuple(&self) -> bool;
-    /// Get the entry at
-    fn get_entry_at(&self, row: usize, column: usize) -> Option<&Vl>;
-    ///
-    fn get_entry_at_index(&self, index: usize) -> Option<&Vl>;
+    /// Get the entry at indices.
+    fn get_entry(&self, row: usize, column: usize) -> Option<&Vl>;
     /// Get the row at an index.
-    fn get_row_(&self, row: usize) -> Option<&[Vl]>;
+    fn get_row(&self, row: usize) -> Option<&[Vl]>;
     /// Iterate over the entries in this table.
     fn iter_entries(&self) -> Self::EntryIterator<'_>;
     /// Iterate over the rows in this table.
@@ -163,9 +161,9 @@ pub trait Pattern<
     /// Check if this pattern has arguments.
     fn has_arguments(&self) -> bool;
     /// Get the argument at an index.
-    fn get_argument_at(&self, index: usize) -> Option<&Vl>;
-    /// Get the attribute by name.
-    fn get_attribute_by_key(&self, key: &str) -> Option<AttributeValue<'_>>;
+    fn get(&self, index: usize) -> Option<&Vl>;
+    /// Get the attribute by key.
+    fn get_attribute_by(&self, key: &str) -> Option<AttributeValue<'_>>;
     /// Get the attribute by index.
     fn get_attribute_at(&self, index: usize) -> Option<Attribute<'_>>;
     /// Iterate over the arguments of this pattern.
@@ -196,15 +194,15 @@ pub trait Composition<
     /// Number of elements in this composition.
     fn len(&self) -> usize;
     /// Get the element at an index.
-    fn get_at(&self, index: usize) -> Option<Element<&Vl>>;
+    fn get(&self, index: usize) -> Option<Element<&Vl>>;
     /// Iterate over the elements in this composition.
     fn iter(&self) -> Self::ElementIterator<'_>;
 }
 
 /// An element in a composition.
 pub enum Element<T> {
-    Substance(T),
-    Whitespace,
+    Solid(T),
+    Space,
 }
 
 pub fn translate_escape_character(char: char) -> Result<char, ()> {

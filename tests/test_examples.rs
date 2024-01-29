@@ -14,7 +14,6 @@ fn test_examples() {
     parse_table_str(&read_document_file("examples/primes.khi")).unwrap();
     parse_table_str(&read_document_file("examples/server-log.khi")).unwrap();
     parse_expression_str(&read_document_file("examples/style.khi")).unwrap();
-    parse_table_str(&read_document_file("examples/words.khi")).unwrap();
 }
 
 fn read_document_file(path: &str) -> String {

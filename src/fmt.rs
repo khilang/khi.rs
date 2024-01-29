@@ -1,15 +1,15 @@
 //! Khi structure formatter. Writes Khi structures to strings.
 
 use std::fmt::Display;
-use crate::{Component, Directive, Expression, Table, Text};
+use crate::{Component, Pattern, Expression, Table, Text};
 
 pub fn fast_format_expression<
-    Ex: Expression<Tx, Dc, Tb, Dr, Cm>,
+    Ex: Value<Tx, Dc, Tb, Dr, Cm>,
     Tx: Text<Ex, Dc, Tb, Dr, Cm>,
     Dc: Dictionry<Ex, Tx, Tb, Dr, Cm>,
     Tb: Table<Ex, Tx, Dc, Dr, Cm>,
-    Dr: Directive<Ex, Tx, Dc, Tb, Cm>,
     Cm: Component<Ex, Tx, Dc, Tb, Dr>,
+    Dr: Pattern<Ex, Tx, Dc, Tb, Cm>,
 >(expression: Ex) {
     let len = expression.length();
     if len == 0 {
