@@ -11,8 +11,8 @@
 
 ## Object
 
-A tag sequence is produces upon reading a dictionary. For example, `{a: X; b: Y; c: Z}`
-produces `<a>X<a/><b>Y</b><c>Z</c>`.
+A tag sequence is produced upon reading a dictionary. For example, `{a: X; b: Y; c: Z}`
+produces `<a>X</a><b>Y</b><c>Z</c>`.
 
 ## HTML example
 

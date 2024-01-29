@@ -20,7 +20,7 @@ To indicate an optional argument, end the command with an apostrophe. For exampl
 
 ## Tabulation
 
-Tabulation is performed upon reading a table. For example, `[1|0|0;0|2|0]` produces
+Tabulation is performed upon reading a table. For example, `[1|0|0; 0|2|0]` produces
 `1&0&0\\0&2&0\\`.
 
 ## Example
