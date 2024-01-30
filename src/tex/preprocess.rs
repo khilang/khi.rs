@@ -28,7 +28,7 @@ pub struct Writer<'a> {
 }
 
 enum BreakMode {
-    Never, Column(usize), Mirror
+    Never, Margin(usize), Mirror
 }
 
 #[derive(Eq, PartialEq)]
@@ -38,18 +38,26 @@ enum LastType {
     Glyph,
     Caret,
     Underscore,
+    Command,
 }
 
 impl Writer<'_> {
 
     fn push(&mut self, char: char) {
         if char.is_whitespace() {
-            if self.last_type == LastType::Caret || self.last_type == LastType::Underscore {} else {
-                if self.last_type != LastType::Whitespace && self.last_type != LastType::Newline {
-                    self.output.push(' ');
-                    self.last_type = LastType::Whitespace;
-                    self.column += 1;
-                };
+            if self.last_type == LastType::Command {
+                self.output.push('{');
+                self.output.push('}');
+                self.output.push(' ');
+                self.last_type = LastType::Whitespace;
+            } else if self.last_type == LastType::Caret || self.last_type == LastType::Underscore {
+                //
+            } else if self.last_type == LastType::Whitespace || self.last_type == LastType::Newline {
+                //
+            } else {
+                self.output.push(' ');
+                self.last_type = LastType::Whitespace;
+                self.column += 1;
             }
         } else if char == '^' {
             self.output.push('^');
@@ -94,7 +102,7 @@ impl Writer<'_> {
         let at_line = position.line;
         match self.break_mode {
             BreakMode::Never => {}
-            BreakMode::Column(margin) => {
+            BreakMode::Margin(margin) => {
                 if margin < self.column {
                     if !matches!(self.last_type, LastType::Newline) {
                         self.output.push('\n');
@@ -122,6 +130,16 @@ impl Writer<'_> {
             }
         }
     }
+
+    /// If an empty command was last written, insert a space.
+    fn separate_command_opportunity(&mut self) {
+        if self.last_type == LastType::Command {
+            self.output.push(' ');
+            self.last_type = LastType::Whitespace;
+            self.column += 1;
+        }
+    }
+
 }
 
 impl Writer<'_> {
@@ -135,13 +153,6 @@ impl Writer<'_> {
             }
             ParsedValue::Text(text, at, _) => {
                 self.break_opportunity(*at);
-                //if self.last_type == LastType::Caret || self.last_type == LastType::Underscore {
-                //    self.push('{');
-                //    self.push_str(text.as_str());
-                //    self.push('}');
-                //} else {
-                //    self.push_str(text.as_str());
-                //}
                 self.push('{');
                 self.normalize_and_push_str(text.as_str());
                 self.push('}');
@@ -171,6 +182,7 @@ impl Writer<'_> {
                                         self.normalize_and_push_str(text.as_str());
                                         self.push('}');
                                     } else {
+                                        self.separate_command_opportunity();
                                         self.normalize_and_push_str(text.as_str());
                                     }
                                 }
@@ -183,13 +195,6 @@ impl Writer<'_> {
                                 }
                                 ParsedValue::Composition(composition, at, _) => {
                                     self.break_opportunity(*at);
-                                    // if self.last_type == LastType::Caret || self.last_type == LastType::Underscore {
-                                    //     self.push('{');
-                                    //     self.write_inner()?;
-                                    //     self.push('}');
-                                    // } else {
-                                    //     self.write_inner()?;
-                                    // }
                                     self.push('{');
                                     self.write_inner(solid)?;
                                     self.push('}');
@@ -299,15 +304,15 @@ impl Writer<'_> {
                         }
                         ParsedValue::Composition(composition, at, to) => {
                             self.break_opportunity(*at);
-                            self.push('{');
+                            self.push('[');
                             self.write_inner(argument)?;
-                            self.push('}');
+                            self.push(']');
                         }
                         ParsedValue::Pattern(pattern, at, to) => {
                             self.break_opportunity(*at);
-                            self.push('{');
+                            self.push('[');
                             self.write_macro(pattern, *at)?;
-                            self.push('}');
+                            self.push(']');
                         }
                     }
                 } else {
@@ -316,6 +321,9 @@ impl Writer<'_> {
             } else {
                 self.push('\\');
                 self.normalize_and_push_str(name);
+            }
+            if !pattern.has_arguments() { // No arguments - if followed by whitespace, insert empty {} after due to LaTeX scanner consuming following whitespace.
+                self.last_type = LastType::Command;
             }
             while let Some(argument) = arguments.next() {
                 match argument {

@@ -23,6 +23,13 @@ To indicate an optional argument, end the command with an apostrophe. For exampl
 Tabulation is performed upon reading a table. For example, `[1|0|0; 0|2|0]` produces
 `1&0&0\\0&2&0\\`.
 
+## Whitespace after command
+
+After a command with no arguments, TeX consumes all whitespace. Thus, there is no
+difference between `\dots {a}` and `\dots{a}`. To rectify this, `{}` is inserted after
+an empty command preceding whitespace. For example, `<dots> a` produces `\dots{} a`
+and `<dots>a` produces `\dots a`.
+
 ## Example
 
 ```
