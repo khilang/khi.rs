@@ -43,6 +43,7 @@ fn test_text_terms() {
     assert_text("Hello\nworld!", "Hello world!");
     assert_text("R e d", "R e d");
     assert_text("R ~ e ~ d", "Red");
+    assert_text("A<#>A  A<#>. A\"A  A\".", "AA  A. AA  A.");
 }
 
 #[test]
@@ -73,6 +74,7 @@ fn test_expression() {
     assert_terms("{Text [Table]}", "Tx Tb");
     assert_terms("{~}", "");
     assert_terms("Text {Text} [Table] {k: v} <Dir>", "Tx Tx Tb Dc Pt");
+    assert_terms("Text \"Text\" [Table] {k: v} <Dir>", "Tx Tb Dc Pt");
 }
 
 #[test]

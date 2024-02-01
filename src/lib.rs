@@ -148,26 +148,26 @@ pub trait Pattern<
     Cm: Composition<Vl, Tx, Dc, Tb, Cm, Pt>,
     Pt: Pattern<Vl, Tx, Dc, Tb, Cm, Pt>,
 > {
-    /// Iterator over pattern arguments.
+    /// Iterator over pattern parameters.
     type ArgumentIterator<'b>: Iterator<Item=&'b Vl> + 'b where Self: 'b, Vl: 'b;
     /// Iterator over pattern attributes.
     type AttributeIterator<'b>: Iterator<Item=Attribute<'b>> + 'b where Self: 'b;
     /// Name of the pattern.
     fn name(&self) -> &str;
-    /// Number of arguments.
+    /// Number of parameters.
     fn len(&self) -> usize;
     /// Check if this pattern has attributes.
     fn has_attributes(&self) -> bool;
-    /// Check if this pattern has arguments.
-    fn has_arguments(&self) -> bool;
-    /// Get the argument at an index.
+    /// Check if this pattern has parameters.
+    fn has_parameters(&self) -> bool;
+    /// Get the parameter at an index.
     fn get(&self, index: usize) -> Option<&Vl>;
     /// Get the attribute by key.
     fn get_attribute_by(&self, key: &str) -> Option<AttributeValue<'_>>;
     /// Get the attribute by index.
     fn get_attribute_at(&self, index: usize) -> Option<Attribute<'_>>;
-    /// Iterate over the arguments of this pattern.
-    fn iter_arguments(&self) -> Self::ArgumentIterator<'_>;
+    /// Iterate over the parameters of this pattern.
+    fn iter(&self) -> Self::ArgumentIterator<'_>;
     /// Iterate over the attributes of this pattern.
     fn iter_attributes(&self) -> Self::AttributeIterator<'_>;
 }

@@ -273,11 +273,11 @@ fn parse_expression(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Res
         }
     }
     let to = iter.position();
-    if let ParsedValue::Pattern(ParsedPattern { name, attributes, mut arguments }, from, to) = head {
+    if let ParsedValue::Pattern(ParsedPattern { name, attributes, patterns: mut arguments }, from, to) = head {
         if arguments.len() == 0 {
-            return Ok(ParsedValue::Pattern(ParsedPattern { name, attributes, arguments: tail }, from, to));
+            return Ok(ParsedValue::Pattern(ParsedPattern { name, attributes, patterns: tail }, from, to));
         } else {
-            tail.insert(0, ParsedValue::Pattern(ParsedPattern { name, attributes, arguments }, from, to));
+            tail.insert(0, ParsedValue::Pattern(ParsedPattern { name, attributes, patterns: arguments }, from, to));
         }
     } else {
         tail.insert(0, head);
@@ -296,25 +296,25 @@ fn parse_term_sequence(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> 
     }
     loop {
         match iter.t0 {
-            Token::Word(from, word) => {
+            Token::Word(from, string) | Token::Quotation(from, string) | Token::TextBlock(from, string) => {
                 let mut text = String::new();
-                text.push_str(word);
+                text.push_str(string);
                 let mut to = from;
                 iter.next();
                 let mut interspace = false;
                 loop {
                     match iter.t0 {
-                        Token::Word(at, word) => {
+                        Token::Word(at, string) | Token::Quotation(at, string) | Token::TextBlock(at, string) => {
                             iter.next();
                             if interspace {
                                 text.push(' ');
                                 interspace = false;
                             }
-                            text.push_str(word);
+                            text.push_str(string);
                             to = at;
                         }
                         Token::Whitespace(..) => {
-                            if !matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Tilde(..)) {
+                            if !matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::Tilde(..)) {
                                 break;
                             }
                             iter.skip_whitespace();
@@ -334,14 +334,6 @@ fn parse_term_sequence(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> 
                 let text = ParsedValue::Text(text, *from, to);
                 push_term(&mut terms, &mut whitespace, &mut after_whitespace, text);
             }
-            Token::Quotation(..) | Token::TextBlock(..) => {
-                let from = iter.position();
-                let text = parse_text_token(iter, strings)?;
-                let text = ParsedText { str: text };
-                let to = iter.position();
-                let text = ParsedValue::Text(text, from, to);
-                push_term(&mut terms, &mut whitespace, &mut after_whitespace, text);
-            },
             Token::LeftBracket(..) => push_term(&mut terms, &mut whitespace, &mut after_whitespace, parse_bracketed_structure(iter, strings)?),
             Token::LeftSquare(..) => push_term(&mut terms, &mut whitespace, &mut after_whitespace, parse_bracketed_table(iter, strings)?),
             Token::LeftAngle(..) => push_term(&mut terms, &mut whitespace, &mut after_whitespace, parse_pattern(iter, strings)?),
@@ -809,7 +801,7 @@ fn parse_pattern(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result
         vec![]
     };
     let to = iter.position();
-    Ok(ParsedValue::Pattern(ParsedPattern { name, attributes, arguments }, from, to))
+    Ok(ParsedValue::Pattern(ParsedPattern { name, attributes, patterns: arguments }, from, to))
 }
 
 /// Parse arguments.
@@ -862,7 +854,7 @@ fn parse_arguments(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Resu
                 let (name, attributes) = parse_tag(iter, strings)?;
                 let name = store_str(strings, &name);
                 let to = iter.position();
-                let pattern = ParsedValue::Pattern(ParsedPattern { name, attributes, arguments: vec![] }, from, to);
+                let pattern = ParsedValue::Pattern(ParsedPattern { name, attributes, patterns: vec![] }, from, to);
                 arguments.push(pattern);
             }
             Token::Diamond(..) => {
@@ -1469,7 +1461,7 @@ impl <'b> Iterator for ElementIterator<'b> {
 pub struct ParsedPattern {
     pub name: Rc<str>,
     pub attributes: Vec<ParsedAttribute>,
-    pub arguments: Vec<ParsedValue>,
+    pub patterns: Vec<ParsedValue>,
 }
 
 impl Pattern<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposition, Self> for ParsedPattern {
@@ -1483,19 +1475,19 @@ impl Pattern<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedCompo
     }
 
     fn len(&self) -> usize {
-        self.arguments.len()
+        self.patterns.len()
     }
 
     fn has_attributes(&self) -> bool {
         !self.attributes.is_empty()
     }
 
-    fn has_arguments(&self) -> bool {
-        !self.arguments.is_empty()
+    fn has_parameters(&self) -> bool {
+        !self.patterns.is_empty()
     }
 
     fn get(&self, index: usize) -> Option<&ParsedValue> {
-        self.arguments.get(index)
+        self.patterns.get(index)
     }
 
     fn get_attribute_by(&self, key: &str) -> Option<AttributeValue<'_>> {
@@ -1521,8 +1513,8 @@ impl Pattern<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedCompo
         }
     }
 
-    fn iter_arguments(&self) -> Self::ArgumentIterator<'_> {
-        self.arguments.iter()
+    fn iter(&self) -> Self::ArgumentIterator<'_> {
+        self.patterns.iter()
     }
 
     fn iter_attributes(&self) -> Self::AttributeIterator<'_> {

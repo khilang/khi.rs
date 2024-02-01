@@ -279,7 +279,7 @@ impl Writer<'_> {
             self.normalize_and_push_str("\\\\");
         }  else {
             // Regular command.
-            let mut arguments = pattern.iter_arguments();
+            let mut arguments = pattern.iter();
             if name.ends_with("'") {
                 name = &name[0..name.len() - 1];
                 self.push('\\');
@@ -322,7 +322,7 @@ impl Writer<'_> {
                 self.push('\\');
                 self.normalize_and_push_str(name);
             }
-            if !pattern.has_arguments() { // No arguments - if followed by whitespace, insert empty {} after due to LaTeX scanner consuming following whitespace.
+            if !pattern.has_parameters() { // No arguments - if followed by whitespace, insert empty {} after due to LaTeX scanner consuming following whitespace.
                 self.last_type = LastType::Command;
             }
             while let Some(argument) = arguments.next() {

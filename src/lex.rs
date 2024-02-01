@@ -71,9 +71,10 @@ pub struct CharIter<It: Iterator<Item = char>> {
 impl <'a, It: Iterator<Item = char>> CharIter<It> {
 
     pub fn new(mut chars: It) -> Self {
-        let c = chars.next();
-        let d = chars.next(); // TODO: Carriage return delete
-        CharIter { chars, c, d, index: 0, line: 1, column: 1 }
+        let mut iter = CharIter { chars, c: None, d: None, index: 0, line: 1, column: 1 };
+        iter.next();
+        iter.next();
+        iter
     }
 
     pub fn next(&mut self) {
@@ -87,7 +88,12 @@ impl <'a, It: Iterator<Item = char>> CharIter<It> {
             self.index += 1;
         };
         self.c = self.d;
-        self.d = self.chars.next(); // TODO: Carriage return delete
+        loop {
+            self.d = self.chars.next();
+            if self.d != Some('\r') {
+                break;
+            }
+        }
     }
 
     pub fn next_two(&mut self) {
