@@ -10,7 +10,7 @@ fn test_examples() {
     parse_expression_str(&read_document_file("examples/frontpage.html.khi")).unwrap();
     parse_expression_str(&read_document_file("examples/fruits.xml.khi")).unwrap();
     parse_dictionary_str(&read_document_file("examples/materials.khi")).unwrap();
-    parse_table_str(&read_document_file("examples/multiline-quotes.khi")).unwrap();
+    parse_table_str(&read_document_file("examples/text-blocks.khi")).unwrap();
     parse_table_str(&read_document_file("examples/primes.khi")).unwrap();
     parse_table_str(&read_document_file("examples/server-log.khi")).unwrap();
     parse_expression_str(&read_document_file("examples/style.khi")).unwrap();

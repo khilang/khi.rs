@@ -9,7 +9,7 @@
 use std::fmt::Write;
 use crate::lex::Position;
 use crate::parse::{ParsedValue, ParsedPattern, ParsedTable};
-use crate::{Pattern, Table, Text, Element, Composition, Value};
+use crate::{Tag, Table, Text, Element, Composition, Value};
 use crate::tex::preprocess::PreprocessorError::{IllegalDictionary, IllegalTable};
 
 pub fn write_tex(structure: &ParsedValue) -> Result<String, PreprocessorError> {
@@ -246,7 +246,7 @@ impl Writer<'_> {
                 if pattern.len() != 3 {
                     return Err(PreprocessorError::MacroError(at, format!("def! must take 3 arguments.")));
                 }
-                let tag = pattern.get(0).unwrap().as_pattern().unwrap();
+                let tag = pattern.get(0).unwrap().as_tag().unwrap();
                 let arity = pattern.get(1).unwrap();
                 let substitute = pattern.get(2).unwrap();
                 self.output.push_str("\\newcommand");

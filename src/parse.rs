@@ -9,7 +9,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::ops::Deref;
 use std::rc::Rc;
 use std::slice::Iter;
-use crate::{Dictionary, Pattern, Value, Table, Text, Element, Composition, Attribute, AttributeValue, Entry};
+use crate::{Dictionary, Tag, Value, Table, Text, Element, Composition, Attribute, AttributeValue, Entry};
 use crate::lex::{lex, LexError, Position, Token};
 
 //// Parse
@@ -228,7 +228,7 @@ fn parse_table_document(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) ->
 ///
 /// ```text
 /// <expression> = <expression'>
-///              | <expression'>_":"_<expression'> # Constructor notation
+///              | <expression'> "<>" <expression'> # Constructor notation
 /// <expression'> = <word>
 ///               | <word> <expression'>
 ///               | <quotation>
@@ -252,23 +252,17 @@ fn parse_expression(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Res
     }
     let from = iter.position();
     let head = parse_term_sequence(iter, strings)?;
-    let c0 = matches!(iter.t0, Token::Whitespace(..));
-    let c1 = matches!(iter.t1, Token::Colon(..));
-    let c2 = matches!(iter.t2, Token::Whitespace(..));
-    let c3 = matches!(iter.t3, Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..));
-    if !(c0 && c1 && c2 && c3) {
+    if !matches!(iter.peek_next_glyph_token(), Token::Diamond(..)) {
         return Ok(head);
     }
     let mut tail = vec![];
     loop {
-        iter.next(); iter.next(); iter.next();
+        iter.skip_whitespace();
+        iter.next();
+        iter.skip_whitespace();
         let e = parse_term_sequence(iter, strings)?;
         tail.push(e);
-        let c0 = matches!(iter.t0, Token::Whitespace(..));
-        let c1 = matches!(iter.t1, Token::Colon(..));
-        let c2 = matches!(iter.t2, Token::Whitespace(..));
-        let c3 = matches!(iter.t3, Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..));
-        if !(c0 && c1 && c2 && c3) {
+        if !matches!(iter.peek_next_glyph_token(), Token::Diamond(..)) {
             break;
         }
     }
@@ -1180,7 +1174,7 @@ impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposi
         }
     }
 
-    fn as_pattern(&self) -> Option<&ParsedPattern> {
+    fn as_tag(&self) -> Option<&ParsedPattern> {
         if let ParsedValue::Pattern(d, ..) = self {
             Some(d)
         } else {
@@ -1208,7 +1202,7 @@ impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposi
         matches!(self, ParsedValue::Composition(..))
     }
 
-    fn is_pattern(&self) -> bool {
+    fn is_tag(&self) -> bool {
         matches!(self, ParsedValue::Pattern(..))
     }
 
@@ -1464,7 +1458,7 @@ pub struct ParsedPattern {
     pub patterns: Vec<ParsedValue>,
 }
 
-impl Pattern<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposition, Self> for ParsedPattern {
+impl Tag<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposition, Self> for ParsedPattern {
 
     type ArgumentIterator<'b> = Iter<'b, ParsedValue>;
 

@@ -1,5 +1,5 @@
 use std::ops::Deref;
-use crate::{Dictionary, Pattern, Value, Text, Element, Entry, Attribute, Composition};
+use crate::{Dictionary, Tag, Value, Text, Element, Entry, Attribute, Composition};
 use crate::lex::Position;
 use crate::parse::{ParsedDictionary, ParsedPattern, ParsedValue};
 

@@ -1,6 +1,6 @@
 use std::ops::Deref;
 use khi::parse::{parse_dictionary_str, parse_expression_str, parse_table_str, ParsedValue};
-use khi::{Composition, Dictionary, Pattern, Value, Table, Element};
+use khi::{Composition, Dictionary, Tag, Value, Table, Element};
 
 #[test]
 fn test_lexer() { // TODO
@@ -20,7 +20,7 @@ fn test_terms() {
     assert!(document.is_table());
     let source = "<Pattern>:arg:arg";
     let document = parse_expression_str(source).unwrap();
-    assert!(document.is_pattern());
+    assert!(document.is_tag());
 }
 
 #[test]
@@ -50,16 +50,16 @@ fn test_text_terms() {
 fn test_pattern_composition() {
     let source = "<p1>:arg1:arg2:<>:<p3>:arg4:arg5:<>:<p6>:arg7";
     let document = parse_expression_str(source).unwrap();
-    assert!(document.is_pattern());
-    let p1 = document.as_pattern().unwrap();
+    assert!(document.is_tag());
+    let p1 = document.as_tag().unwrap();
     assert_eq!(p1.len(), 3);
     let p1arg = p1.get(2).unwrap();
-    assert!(p1arg.is_pattern());
-    let p2 = p1arg.as_pattern().unwrap();
+    assert!(p1arg.is_tag());
+    let p2 = p1arg.as_tag().unwrap();
     assert_eq!(p2.len(), 3);
     let p2arg = p2.get(2).unwrap();
-    assert!(p2arg.is_pattern());
-    let p3 = p2arg.as_pattern().unwrap();
+    assert!(p2arg.is_tag());
+    let p3 = p2arg.as_tag().unwrap();
     assert_eq!(p3.len(), 1);
 }
 
@@ -79,11 +79,11 @@ fn test_expression() {
 
 #[test]
 fn test_constructor_notation() {
-    assert_constructor("a a : b b", 2);
-    assert_constructor("a : [b] : {c}", 3);
-    assert_constructor("<a>:b:c : d d : <e>:f", 3);
-    assert_pattern("<a> : b", 1);
-    assert_pattern("<a> : b b : c", 2);
+    assert_constructor("a a <> b b", 2);
+    assert_constructor("a <> [b] <> {c}", 3);
+    assert_constructor("<a>:b:c <> d d <> <e>:f", 3);
+    assert_pattern("<a> <> b", 1);
+    assert_pattern("<a> <> b b <> c", 2);
 }
 
 fn assert_constructor(source: &str, len: usize) {
@@ -94,8 +94,8 @@ fn assert_constructor(source: &str, len: usize) {
 
 fn assert_pattern(source: &str, len: usize) {
     let document = parse_expression_str(source).unwrap();
-    assert!(document.is_pattern());
-    let pattern = document.as_pattern().unwrap();
+    assert!(document.is_tag());
+    let pattern = document.as_tag().unwrap();
     assert_eq!(pattern.len(), len);
 }
 

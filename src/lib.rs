@@ -32,14 +32,14 @@ pub mod tex;
 /// - dictionary
 /// - table
 /// - composition
-/// - pattern
+/// - tag
 pub trait Value<
-    Vl: Value<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Tx: Text<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Tb: Table<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Pt: Pattern<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Vl: Value<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Tx: Text<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Tb: Table<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tg>,
 > {
     /// Get as text.
     fn as_text(&self) -> Option<&Tx>;
@@ -49,8 +49,8 @@ pub trait Value<
     fn as_table(&self) -> Option<&Tb>;
     /// Get as a composition.
     fn as_composition(&self) -> Option<&Cm>;
-    /// Get as a pattern.
-    fn as_pattern(&self) -> Option<&Pt>;
+    /// Get as a tag.
+    fn as_tag(&self) -> Option<&Tg>;
     /// Check if this is nil.
     fn is_nil(&self) -> bool;
     /// Check if this is text.
@@ -61,30 +61,30 @@ pub trait Value<
     fn is_table(&self) -> bool;
     /// Check if this is a composition.
     fn is_composition(&self) -> bool;
-    /// Check if this is a pattern.
-    fn is_pattern(&self) -> bool;
+    /// Check if this is a tag.
+    fn is_tag(&self) -> bool;
 }
 
 /// Text.
 pub trait Text<
-    Vl: Value<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Tx: Text<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Tb: Table<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Pt: Pattern<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Vl: Value<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Tx: Text<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Tb: Table<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tg>,
 > {
     fn as_str(&self) -> &str;
 }
 
 /// A dictionary.
 pub trait Dictionary<
-    Vl: Value<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Tx: Text<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Tb: Table<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Pt: Pattern<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Vl: Value<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Tx: Text<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Tb: Table<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tg>,
 > {
     type EntryIterator<'b>: Iterator<Item=Entry<'b, Vl>> where Self: 'b, Vl: 'b;
     /// Number of entries in this dictionary.
@@ -102,12 +102,12 @@ pub struct Entry<'a, St>(&'a str, &'a St);
 
 /// A table.
 pub trait Table<
-    Vl: Value<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Tx: Text<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Tb: Table<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Pt: Pattern<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Vl: Value<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Tx: Text<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Tb: Table<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tg>,
 > {
     /// Iterator over the rows in a table.
     type RowIterator<'b>: Iterator<Item=Box<[&'b Vl]>> where Self: 'b, Vl: 'b;
@@ -139,26 +139,26 @@ pub trait Table<
     fn iter_rows(&self) -> Self::RowIterator<'_>;
 }
 
-/// A pattern.
-pub trait Pattern<
-    Vl: Value<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Tx: Text<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Tb: Table<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Pt: Pattern<Vl, Tx, Dc, Tb, Cm, Pt>,
+/// A tag.
+pub trait Tag<
+    Vl: Value<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Tx: Text<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Tb: Table<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tg>,
 > {
-    /// Iterator over pattern parameters.
+    /// Iterator over tag parameters.
     type ArgumentIterator<'b>: Iterator<Item=&'b Vl> + 'b where Self: 'b, Vl: 'b;
-    /// Iterator over pattern attributes.
+    /// Iterator over tag attributes.
     type AttributeIterator<'b>: Iterator<Item=Attribute<'b>> + 'b where Self: 'b;
-    /// Name of the pattern.
+    /// Name of the tag.
     fn name(&self) -> &str;
     /// Number of parameters.
     fn len(&self) -> usize;
-    /// Check if this pattern has attributes.
+    /// Check if this tag has attributes.
     fn has_attributes(&self) -> bool;
-    /// Check if this pattern has parameters.
+    /// Check if this tag has parameters.
     fn has_parameters(&self) -> bool;
     /// Get the parameter at an index.
     fn get(&self, index: usize) -> Option<&Vl>;
@@ -166,16 +166,16 @@ pub trait Pattern<
     fn get_attribute_by(&self, key: &str) -> Option<AttributeValue<'_>>;
     /// Get the attribute by index.
     fn get_attribute_at(&self, index: usize) -> Option<Attribute<'_>>;
-    /// Iterate over the parameters of this pattern.
+    /// Iterate over the parameters of this tag.
     fn iter(&self) -> Self::ArgumentIterator<'_>;
-    /// Iterate over the attributes of this pattern.
+    /// Iterate over the attributes of this tag.
     fn iter_attributes(&self) -> Self::AttributeIterator<'_>;
 }
 
-/// An attribute of a pattern.
+/// An attribute of a tag.
 pub struct Attribute<'a>(&'a str, Option<&'a str>);
 
-/// An attribute value of a pattern.
+/// An attribute value of a tag.
 pub struct AttributeValue<'a>(Option<&'a str>);
 
 /// A composition.
@@ -187,7 +187,7 @@ pub trait Composition<
     Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Pt>,
     Tb: Table<Vl, Tx, Dc, Tb, Cm, Pt>,
     Cm: Composition<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Pt: Pattern<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Pt: Tag<Vl, Tx, Dc, Tb, Cm, Pt>,
 > {
     /// Iterator over the elements in a composition.
     type ElementIterator<'a>: Iterator<Item=Element<&'a Vl>> where Self: 'a, Vl: 'a;
