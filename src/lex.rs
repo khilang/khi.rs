@@ -360,7 +360,7 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
     Ok(Token::Word(at, string))
 }
 
-/// Lex a transcription.
+/// Lex a transcription. // TODO: Multiple \\\\ ? Empty transcription?
 ///
 /// Assumes that the current character is `\ `.
 fn lex_transcription<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token, LexError> {
