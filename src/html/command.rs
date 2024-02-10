@@ -39,6 +39,9 @@ fn preprocess() -> Result<String, String> {
                     PreprocessorError::TooManyArguments(at) => {
                         format!("Tag at {}:{} has more than one argument.", at.line, at.column)
                     }
+                    PreprocessorError::IllegalTuple(at) => {
+                        format!("Illegal tuple at {}:{}.", at.line, at.column)
+                    }
                 })
             }
         }

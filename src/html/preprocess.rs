@@ -1,12 +1,12 @@
 use std::ops::Deref;
 use crate::{Dictionary, Tag, Value, Text, Element, Entry, Attribute, Composition};
 use crate::lex::Position;
-use crate::parse::{ParsedDictionary, ParsedPattern, ParsedValue};
+use crate::parse::{ParsedDictionary, ParsedTag, ParsedValue};
 
 pub fn write_html(value: &ParsedValue) -> Result<String, PreprocessorError> {
     let mut output = String::new();
     let mut writer = XmlWriter { output: &mut output, column: 1, newline: 60, last: LastType::Whitespace, };
-    writer.write_inner(value)?;
+    writer.write_xml_composition(value)?;
     Ok(output)
 }
 
@@ -70,7 +70,7 @@ impl XmlWriter<'_> {
 
 impl XmlWriter<'_> {
 
-    fn write_inner(&mut self, value: &ParsedValue) -> Result<(), PreprocessorError> {
+    fn write_xml_composition(&mut self, value: &ParsedValue) -> Result<(), PreprocessorError> {
         match value {
             ParsedValue::Nil(..) => {}
             ParsedValue::Text(text, ..) => {
@@ -85,33 +85,37 @@ impl XmlWriter<'_> {
             ParsedValue::Composition(composition, from, to) => {
                 for element in composition.iter() {
                     if let Element::Solid(value) = element {
-                        self.write_inner(value)?;
+                        self.write_xml_composition(value)?;
                     } else {
                         self.push_whitespace();
                     }
                 }
             }
-            ParsedValue::Pattern(pattern, from, to) => {
+            ParsedValue::Tuple(tuple, from, to) => {
+                return Err(PreprocessorError::IllegalTuple(*from));
+            }
+            ParsedValue::Tag(pattern, from, to) => {
                 self.write_tag(pattern, *from)?;
             }
         }
         Ok(())
     }
 
-    fn write_tag(&mut self, pattern: &ParsedPattern, at: Position) -> Result<(), PreprocessorError> {
+    fn write_tag(&mut self, pattern: &ParsedTag, at: Position) -> Result<(), PreprocessorError> {
         let name = pattern.name();
+        let arguments = pattern.get().unfold();
         if name.ends_with('!') {
             if name.deref() == "doctype!" {
-                if pattern.has_attributes() || pattern.len() != 1 {
+                if pattern.has_attributes() || arguments.len() != 1 {
                     return Err(PreprocessorError::MacroError(format!("doctype! macro cannot have attributes and must have 1 argument.")))
                 }
-                let doctype = pattern.get(0).unwrap();
+                let doctype = arguments.get(0).unwrap();
                 self.push_str_non_breaking("<!DOCTYPE ");
                 self.push_str_non_breaking(doctype.as_text().unwrap().as_str());
                 self.push_str_non_breaking(">");
                 Ok(())
             } else if name.deref() == "raw!" {
-                if let Some(raw) = pattern.get(0) {
+                if let Some(raw) = arguments.get(0) {
                     if let Some(text) = raw.as_text() {
                         self.output.push_str(text.as_str());
                         Ok(())
@@ -126,10 +130,10 @@ impl XmlWriter<'_> {
             }
         } else {
             // Tag
-            let argument = if pattern.len() == 0 {
+            let argument = if arguments.len() == 0 {
                 None // Self closing tag
-            } else if pattern.len() == 1 {
-                pattern.get(0) // Regular tag
+            } else if arguments.len() == 1 {
+                arguments.get(0) // Regular tag
             } else {
                 return Err(PreprocessorError::TooManyArguments(at));
             };
@@ -152,7 +156,7 @@ impl XmlWriter<'_> {
             }
             self.push_non_breaking('>');
             if let Some(argument) = argument {
-                self.write_inner(argument)?;
+                self.write_xml_composition(argument)?;
             } else {
                 return Ok(());
             };
@@ -168,7 +172,7 @@ impl XmlWriter<'_> {
             self.push_non_breaking('<');
             self.push_str_non_breaking(key);
             self.push_non_breaking('>');
-            self.write_inner(value)?;
+            self.write_xml_composition(value)?;
             self.push_str_non_breaking("</");
             self.push_str_non_breaking(key);
             self.push_non_breaking('>');
@@ -182,4 +186,5 @@ pub enum PreprocessorError {
     IllegalTable(Position),
     MacroError(String),
     TooManyArguments(Position),
+    IllegalTuple(Position),
 }

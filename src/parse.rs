@@ -6,10 +6,10 @@
 
 use std::collections::{HashSet};
 use std::fmt::{Debug, Display, Formatter};
-use std::ops::Deref;
+use std::ops::{Deref};
 use std::rc::Rc;
 use std::slice::Iter;
-use crate::{Dictionary, Tag, Value, Table, Text, Element, Composition, Attribute, AttributeValue, Entry};
+use crate::{Dictionary, Tag, Value, Table, Text, Element, Composition, Attribute, AttributeValue, Entry, Tuple};
 use crate::lex::{lex, LexError, Position, Token};
 
 //// Parse
@@ -58,11 +58,12 @@ fn tokenize(document: &str) -> Result<Vec<Token>> {
         Err(error) => {
             return match error {
                 LexError::EscapeEOS => Err(ParseError::EscapingEndOfStream),
-                LexError::UnclosedQuotation(at) => Err(ParseError::UnclosedQuotation(at)),
+                LexError::UnclosedTranscription(at) => Err(ParseError::UnclosedTranscription(at)),
                 LexError::InvalidEscapeSequence(at) => Err(ParseError::InvalidEscapeSequence(at)),
                 LexError::InvalidHashSequence(at) => Err(ParseError::IllegalHashSequence(at)),
-                LexError::UnclosedTextBlockTag(at) => Err(ParseError::UnclosedTextBlockTag(at)),
+                LexError::UnclosedTextBlock(at) => Err(ParseError::UnclosedTextBlock(at)),
                 LexError::InvalidTextBlockConfiguration(at) => Err(ParseError::InvalidTextBlockConfiguration(at)),
+                LexError::IllegalEscapeCharacter(at) => Err(ParseError::IllegalEscapeCharacter(at)),
             };
         }
     };
@@ -84,7 +85,7 @@ struct TokenIter<'a> {
 
 impl <'a> TokenIter<'a> {
 
-    fn new(mut tokens: Iter<'a, Token>) -> Self {
+    fn new(tokens: Iter<'a, Token>) -> Self {
         let default = &Token::End(Position { index: 0, line: 0, column: 0 });
         let mut iter = TokenIter { tokens, t0: default, t1: default, t2: default, t3: default };
         iter.next(); iter.next(); iter.next(); iter.next();
@@ -171,7 +172,7 @@ impl <'a> TokenIter<'a> {
 fn parse_expression_document(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedValue> {
     let from = iter.position();
     iter.skip_whitespace();
-    let value = if matches!(iter.t0, Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..)) {
+    let value = if matches_expression(iter.t0) {
         let value = parse_expression(iter, strings)?;
         iter.skip_whitespace();
         value
@@ -192,7 +193,7 @@ fn parse_expression_document(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>
 /// ```
 fn parse_dictionary_document(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedDictionary> {
     iter.skip_whitespace();
-    let dictionary = if matches!(iter.t0, Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::RightAngle(..)) {
+    let dictionary = if matches!(iter.t0, Token::Word(..) | Token::Transcription(..) | Token::TextBlock(..) | Token::RightAngle(..)) {
         let dictionary = parse_dictionary(iter, strings)?;
         iter.skip_whitespace();
         dictionary
@@ -212,7 +213,7 @@ fn parse_dictionary_document(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>
 /// ```
 fn parse_table_document(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedTable> {
     iter.skip_whitespace();
-    let table = if matches!(iter.t0, Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) | Token::Bar(..) | Token::RightAngle(..)) {
+    let table = if matches!(iter.t0, Token::Word(..) | Token::Transcription(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) | Token::Bar(..) | Token::RightAngle(..)) {
         let table = parse_table(iter, strings)?;
         iter.skip_whitespace();
         table
@@ -228,31 +229,36 @@ fn parse_table_document(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) ->
 ///
 /// ```text
 /// <expression> = <expression'>
-///              | <expression'> "<>" <expression'> # Constructor notation
-/// <expression'> = <word>
-///               | <word> <expression'>
-///               | <quotation>
-///               | <quotation> <expression'>
-///               | <text-block>
-///               | <text-block> <expression'>
-///               | <bracketed-expression>
-///               | <bracketed-expression> <expression'>
-///               | <bracketed-dictionary>
-///               | <bracketed-dictionary> <expression'>
-///               | <bracketed-table>
-///               | <bracketed-table> <expression'>
-///               | <pattern>
-///               | <pattern> <expression'>
-///               | "~"
-///               | "~" <expression'>
+///              | "::"
+///              | "::" <expression'>
+/// <expression'> = <expression''>
+///               | <expression''> "::" <expression'>
+/// <expression''> = <word>
+///                | <word> <expression''>
+///                | <transcription>
+///                | <transcription> <expression''>
+///                | <text-block>
+///                | <text-block> <expression''>
+///                | <bracketed-expression>
+///                | <bracketed-expression> <expression''>
+///                | <bracketed-dictionary>
+///                | <bracketed-dictionary> <expression''>
+///                | <bracketed-table>
+///                | <bracketed-table> <expression''>
+///                | <tuple>
+///                | <tuple> <expression''>
+///                | <tagged-value>
+///                | <tagged-value> <expression''>
+///                | "~"
+///                | "~" <expression''>
 /// ```
 fn parse_expression(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedValue> {
-    if !matches!(iter.t0, Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..)) {
-        return iter.expectation_error(&[TokenType::Word, TokenType::Quotation, TokenType::TextBlock, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Tilde]);
+    if !matches_expression(iter.t0) {
+        return iter.expectation_error(&[TokenType::Word, TokenType::Transcription, TokenType::TextBlock, TokenType::LeftBracket, TokenType::Diamond, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Tilde]);
     }
     let from = iter.position();
     let head = parse_term_sequence(iter, strings)?;
-    if !matches!(iter.peek_next_glyph_token(), Token::Diamond(..)) {
+    if !matches!(iter.peek_next_glyph_token(), Token::DoubleColon(..)) {
         return Ok(head);
     }
     let mut tail = vec![];
@@ -262,22 +268,22 @@ fn parse_expression(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Res
         iter.skip_whitespace();
         let e = parse_term_sequence(iter, strings)?;
         tail.push(e);
-        if !matches!(iter.peek_next_glyph_token(), Token::Diamond(..)) {
+        if !matches!(iter.peek_next_glyph_token(), Token::DoubleColon(..)) {
             break;
         }
     }
     let to = iter.position();
-    if let ParsedValue::Pattern(ParsedPattern { name, attributes, patterns: mut arguments }, from, to) = head {
-        if arguments.len() == 0 {
-            return Ok(ParsedValue::Pattern(ParsedPattern { name, attributes, patterns: tail }, from, to));
+    if let ParsedValue::Tag(ParsedTag { name, attributes, value: head_value }, from, to) = head {
+        if head_value.unfold().is_empty() {
+            let value = ParsedValue::from_tuple(tail, from, to);
+            return Ok(ParsedValue::Tag(ParsedTag { name, attributes, value: Box::new(value) }, from, to));
         } else {
-            tail.insert(0, ParsedValue::Pattern(ParsedPattern { name, attributes, patterns: arguments }, from, to));
+            tail.insert(0, ParsedValue::Tag(ParsedTag { name, attributes, value: head_value }, from, to));
         }
     } else {
         tail.insert(0, head);
     }
-    let len = tail.len();
-    Ok(ParsedValue::Table(ParsedTable { elements: tail, columns: len }, from, to))
+    Ok(ParsedValue::from_tuple(tail, from, to))
 }
 
 fn parse_term_sequence(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedValue> {
@@ -285,30 +291,28 @@ fn parse_term_sequence(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> 
     let mut whitespace = vec![];
     let from = iter.position();
     let mut after_whitespace = false;
-    if !matches!(iter.t0, Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..)) {
-        return iter.expectation_error(&[TokenType::Word, TokenType::Quotation, TokenType::TextBlock, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Tilde]);
+    if !matches_expression(iter.t0) {
+        return iter.expectation_error(&[TokenType::Word, TokenType::Transcription, TokenType::TextBlock, TokenType::LeftBracket, TokenType::Diamond, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Tilde]);
     }
     loop {
         match iter.t0 {
-            Token::Word(from, string) | Token::Quotation(from, string) | Token::TextBlock(from, string) => {
+            Token::Word(from, string) | Token::Transcription(from, string) | Token::TextBlock(from, string) => {
                 let mut text = String::new();
                 text.push_str(string);
-                let mut to = from;
                 iter.next();
                 let mut interspace = false;
                 loop {
                     match iter.t0 {
-                        Token::Word(at, string) | Token::Quotation(at, string) | Token::TextBlock(at, string) => {
+                        Token::Word(_, string) | Token::Transcription(_, string) | Token::TextBlock(_, string) => {
                             iter.next();
                             if interspace {
                                 text.push(' ');
                                 interspace = false;
                             }
                             text.push_str(string);
-                            to = at;
                         }
                         Token::Whitespace(..) => {
-                            if !matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::Tilde(..)) {
+                            if !matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Transcription(..) | Token::TextBlock(..) | Token::Tilde(..)) {
                                 break;
                             }
                             iter.skip_whitespace();
@@ -329,10 +333,11 @@ fn parse_term_sequence(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> 
                 push_term(&mut terms, &mut whitespace, &mut after_whitespace, text);
             }
             Token::LeftBracket(..) => push_term(&mut terms, &mut whitespace, &mut after_whitespace, parse_bracketed_structure(iter, strings)?),
+            Token::Diamond(..) => push_term(&mut terms, &mut whitespace, &mut after_whitespace, parse_tuple(iter, strings)?),
             Token::LeftSquare(..) => push_term(&mut terms, &mut whitespace, &mut after_whitespace, parse_bracketed_table(iter, strings)?),
-            Token::LeftAngle(..) => push_term(&mut terms, &mut whitespace, &mut after_whitespace, parse_pattern(iter, strings)?),
+            Token::LeftAngle(..) => push_term(&mut terms, &mut whitespace, &mut after_whitespace, parse_tagged_value(iter, strings)?),
             Token::Whitespace(..) => {
-                if !matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..)) {
+                if !matches_expression(iter.peek_next_glyph_token()) {
                     break;
                 }
                 iter.skip_whitespace();
@@ -368,12 +373,16 @@ fn parse_term_sequence(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> 
 /// ```text
 /// <dictionary> = <flow-dictionary>
 ///              | <bullet-dictionary>
+///
+/// <dictionary-entry> = <word>":" <expression>
+///                    | <transcription>":" <expression>
+///                    | <text-block>":" <expression>
 /// ```
 fn parse_dictionary(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedDictionary> {
     match iter.t0 {
-        Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) => parse_flow_dictionary(iter, strings),
+        Token::Word(..) | Token::Transcription(..) | Token::TextBlock(..) => parse_flow_dictionary(iter, strings),
         Token::RightAngle(..) => parse_bullet_dictionary(iter, strings),
-        _ => iter.expectation_error(&[TokenType::Word, TokenType::Quotation, TokenType::TextBlock, TokenType::RightAngle]),
+        _ => iter.expectation_error(&[TokenType::Word, TokenType::Transcription, TokenType::TextBlock, TokenType::RightAngle]),
     }
 }
 
@@ -385,15 +394,11 @@ fn parse_dictionary(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Res
 /// <flow-dictionary> = <dictionary-entry>
 ///                   | <dictionary-entry> ";"
 ///                   | <dictionary-entry> ";" <flow-dictionary>
-///
-/// <dictionary-entry> = <word>":" <expression>
-///                    | <quotation>":" <expression>
-///                    | <text-block>":" <expression>
 /// ```
 fn parse_flow_dictionary(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedDictionary> {
     let mut entries = vec![];
-    if !matches!(iter.t0, Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..)) {
-        return iter.expectation_error(&[TokenType::Word, TokenType::Quotation, TokenType::TextBlock]);
+    if !matches!(iter.t0, Token::Word(..) | Token::Transcription(..) | Token::TextBlock(..)) {
+        return iter.expectation_error(&[TokenType::Word, TokenType::Transcription, TokenType::TextBlock]);
     };
     loop {
         let key = parse_text_token(iter, strings)?;
@@ -408,7 +413,7 @@ fn parse_flow_dictionary(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -
             return Ok(ParsedDictionary { entries });
         };
         iter.consume_next_glyph_token();
-        if !matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..)) {
+        if !matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Transcription(..) | Token::TextBlock(..)) {
             return Ok(ParsedDictionary { entries });
         };
         iter.skip_whitespace();
@@ -422,10 +427,6 @@ fn parse_flow_dictionary(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -
 /// ```text
 /// <bullet-dictionary> = ">" <dictionary-entry>
 ///                     | ">" <dictionary-entry> <bullet-dictionary>
-///
-/// <dictionary-entry> = <word>":" <expression>
-///                    | <quotation>":" <expression>
-///                    | <text-block>":" <expression>
 /// ```
 fn parse_bullet_dictionary(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedDictionary> {
     let mut entries = vec![];
@@ -450,6 +451,29 @@ fn parse_bullet_dictionary(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>)
     }
 }
 
+/// Parse a tuple.
+///
+/// Recognizes `<tuple>`.
+///
+/// ```text
+/// <tuple> = "<>"
+///         | "<>"<arguments>
+/// ```
+fn parse_tuple(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedValue> {
+    if !matches!(iter.t0, Token::Diamond(..)) {
+        return iter.expectation_error(&[TokenType::Diamond]);
+    }
+    let from = iter.position();
+    iter.next();
+    let arguments = if matches!(iter.t0, Token::Colon(..)) {
+        parse_arguments(iter, strings)?
+    } else {
+        vec![]
+    };
+    let to = iter.position();
+    Ok(ParsedValue::from_tuple(arguments, from, to))
+}
+
 /// Parse a table.
 ///
 /// Recognizes `<table>`.
@@ -462,7 +486,7 @@ fn parse_bullet_dictionary(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>)
 /// ```
 fn parse_table(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedTable> {
     match iter.peek_next_glyph_token() {
-        Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..)| Token::LeftSquare(..)  | Token::LeftAngle(..) | Token::Tilde(..) => parse_flow_table(iter, strings),
+        Token::Word(..) | Token::Transcription(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::Diamond(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) => parse_flow_table(iter, strings),
         Token::Bar(..) => {
             let (entries, columns) = parse_grid_table(iter, strings)?;
             Ok(ParsedTable { elements: entries, columns })
@@ -474,7 +498,7 @@ fn parse_table(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<P
         Token::Whitespace(..) => unreachable!(),
         _ => {
             iter.skip_whitespace();
-            iter.expectation_error(&[TokenType::Word, TokenType::Quotation, TokenType::TextBlock, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Tilde, TokenType::Bar, TokenType::RightAngle])
+            iter.expectation_error(&[TokenType::Word, TokenType::Transcription, TokenType::TextBlock, TokenType::LeftBracket, TokenType::Diamond, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Tilde, TokenType::Bar, TokenType::RightAngle])
         }
     }
 }
@@ -499,7 +523,7 @@ fn parse_flow_table(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Res
         match iter.peek_next_glyph_token() {
             Token::Semicolon(..) => {
                 iter.consume_next_glyph_token();
-                if matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..)) {
+                if matches_expression(iter.peek_next_glyph_token()) {
                     iter.skip_whitespace();
                     break;
                 } else {
@@ -527,7 +551,7 @@ fn parse_flow_table(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Res
                     if c != columns {
                         return Err(ParseError::ExpectedColumns(iter.position(), c, columns));
                     };
-                    if matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..)) {
+                    if matches!(iter.peek_next_glyph_token(), Token::Word(..) | Token::Transcription(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..)) {
                         iter.skip_whitespace();
                         break;
                     } else {
@@ -568,7 +592,7 @@ fn parse_grid_table(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Res
         };
         iter.next();
         match iter.peek_next_glyph_token() {
-            Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) => {
+            Token::Word(..) | Token::Transcription(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::Diamond(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) => {
                 iter.skip_whitespace();
                 let entry = parse_expression(iter, strings)?;
                 columns += 1;
@@ -598,7 +622,7 @@ fn parse_grid_table(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Res
             };
             iter.next();
             match iter.peek_next_glyph_token() {
-                Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) => {
+                Token::Word(..) | Token::Transcription(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::Diamond(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) => {
                     iter.skip_whitespace();
                     let entry = parse_expression(iter, strings)?;
                     c += 1;
@@ -743,8 +767,8 @@ fn parse_tag(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<(Rc
 ///              | <word> <attributes>
 ///              | <word>":" <word>
 ///              | <word>":" <word> <attributes>
-///              | <word>":" <quotation>
-///              | <word>":" <quotation> <attributes>
+///              | <word>":" <transcription>
+///              | <word>":" <transcription> <attributes>
 ///              | <word>":" <text-block>
 ///              | <word>":" <text-block> <attributes>
 /// ```
@@ -783,10 +807,10 @@ fn parse_attributes(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Res
 /// Recognizes `<pattern>`.
 ///
 /// ```text
-/// <pattern> = <tag>
-///           | <tag><arguments>
+/// <tagged-value> = <tag>
+///                | <tag><arguments>
 /// ```
-fn parse_pattern(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedValue> {
+fn parse_tagged_value(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedValue> {
     let from = iter.position();
     let (name, attributes) = parse_tag(iter, strings)?;
     let arguments = if matches!(iter.t0, Token::Colon(..)) {
@@ -795,7 +819,8 @@ fn parse_pattern(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result
         vec![]
     };
     let to = iter.position();
-    Ok(ParsedValue::Pattern(ParsedPattern { name, attributes, patterns: arguments }, from, to))
+    let value = ParsedValue::from_tuple(arguments, from, to);
+    Ok(ParsedValue::Tag(ParsedTag { name, attributes, value: Box::new(value) }, from, to))
 }
 
 /// Parse arguments.
@@ -805,8 +830,8 @@ fn parse_pattern(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result
 /// ```text
 /// <arguments> = ":"<word>
 ///             | ":"<word><arguments>
-///             | ":"<quotation>
-///             | ":"<quotation><arguments>
+///             | ":"<transcription>
+///             | ":"<transcription><arguments>
 ///             | ":"<text-block>
 ///             | ":"<text-block><arguments>
 ///             | ":"<bracketed-expression>
@@ -815,19 +840,22 @@ fn parse_pattern(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result
 ///             | ":"<bracketed-dictionary><arguments>
 ///             | ":"<bracketed-table>
 ///             | ":"<bracketed-table><arguments>
+///             | ":""<>"
+///             | ":""<>"<arguments>
 ///             | ":"<tag>
 ///             | ":"<tag><arguments>
-///             | ":""<>"":"<pattern>
+///             | ":"_<tuple>
+///             | ":"_<tagged-value>
 /// ```
 fn parse_arguments(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<Vec<ParsedValue>> {
     let mut arguments = vec![];
     if !matches!(iter.t0, Token::Colon(..)) {
         return iter.expectation_error(&[TokenType::Colon]);
-    };
+    }
     iter.next();
     loop {
         match iter.t0 {
-            Token::Word(.., s) | Token::Quotation(.., s) | Token::TextBlock(.., s) => {
+            Token::Word(.., s) | Token::Transcription(.., s) | Token::TextBlock(.., s) => {
                 let from = iter.position();
                 iter.next();
                 let to = iter.position();
@@ -839,6 +867,12 @@ fn parse_arguments(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Resu
                 let value = parse_bracketed_structure(iter, strings)?;
                 arguments.push(value);
             }
+            Token::Diamond(..) => {
+                let from = iter.position();
+                iter.next();
+                let to = iter.position();
+                arguments.push(ParsedValue::Tuple(ParsedTuple::Unit, from, to));
+            }
             Token::LeftSquare(..) => {
                 let table = parse_bracketed_table(iter, strings)?;
                 arguments.push(table);
@@ -848,26 +882,27 @@ fn parse_arguments(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Resu
                 let (name, attributes) = parse_tag(iter, strings)?;
                 let name = store_str(strings, &name);
                 let to = iter.position();
-                let pattern = ParsedValue::Pattern(ParsedPattern { name, attributes, patterns: vec![] }, from, to);
+                let pattern = ParsedValue::Tag(ParsedTag { name, attributes, value: Box::new(ParsedValue::Nil(to, to)) }, from, to);
                 arguments.push(pattern);
             }
-            Token::Diamond(..) => {
-                iter.next();
-                if !matches!(iter.t0, Token::Colon(..)) {
-                    return iter.expectation_error(&[TokenType::Colon]);
+            Token::Whitespace(..) => {
+                iter.skip_whitespace();
+                let inner = match iter.t0 {
+                    Token::Diamond(..) => parse_tuple(iter, strings)?,
+                    Token::LeftAngle(..) => parse_tagged_value(iter, strings)?,
+                    _ => return iter.expectation_error(&[TokenType::Diamond, TokenType::LeftAngle]),
                 };
-                iter.next();
-                let right_pattern = parse_pattern(iter, strings)?;
-                arguments.push(right_pattern);
-                return Ok(arguments);
+                arguments.push(inner);
+                break;
             }
-            _ => return iter.expectation_error(&[TokenType::Word, TokenType::Quotation, TokenType::TextBlock, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Diamond]),
+            _ => return iter.expectation_error(&[TokenType::Word, TokenType::Transcription, TokenType::TextBlock, TokenType::LeftBracket, TokenType::Diamond, TokenType::LeftSquare, TokenType::LeftAngle]),
         }
-        if !matches!(iter.t0, Token::Colon(..)) {
-            return Ok(arguments);
-        };
-        iter.next();
+        match iter.t0 {
+            Token::Colon(..) => iter.next(),
+            _ => break,
+        }
     }
+    Ok(arguments)
 }
 
 /// Parse a bracketed expression or dictionary.
@@ -888,7 +923,7 @@ fn parse_bracketed_structure(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>
     iter.next();
     iter.skip_whitespace();
     match iter.t0 {
-        Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) => {
+        Token::Word(..) | Token::Transcription(..) | Token::TextBlock(..) => {
             match iter.t1 {
                 Token::Colon(..) => {
                     let dictionary = parse_dictionary(iter, strings)?;
@@ -900,7 +935,7 @@ fn parse_bracketed_structure(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>
                     let to = iter.position();
                     Ok(ParsedValue::Dictionary(dictionary, from, to))
                 }
-                Token::Whitespace(..) | Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) | Token::RightBracket(..) => {
+                Token::Whitespace(..) | Token::Word(..) | Token::Transcription(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::Diamond(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) | Token::RightBracket(..) => {
                     let value = parse_expression(iter, strings);
                     iter.skip_whitespace();
                     if !matches!(iter.t0, Token::RightBracket(..)) {
@@ -911,11 +946,11 @@ fn parse_bracketed_structure(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>
                 }
                 _ => {
                     iter.next();
-                    return iter.expectation_error(&[TokenType::Colon, TokenType::Whitespace, TokenType::Word, TokenType::Quotation, TokenType::TextBlock, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Tilde, TokenType::RightBracket]);
+                    return iter.expectation_error(&[TokenType::Colon, TokenType::Whitespace, TokenType::Word, TokenType::Transcription, TokenType::TextBlock, TokenType::LeftBracket, TokenType::Diamond, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Tilde, TokenType::RightBracket]);
                 }
             }
         }
-        Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) => { // Expression
+        Token::LeftBracket(..) | Token::Diamond(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) => { // Expression
             let value = parse_expression(iter, strings)?;
             iter.skip_whitespace();
             if !matches!(iter.t0, Token::RightBracket(..)) {
@@ -941,7 +976,7 @@ fn parse_bracketed_structure(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>
             Ok(ParsedValue::Dictionary(dictionary, from, to))
         }
         Token::Whitespace(..) => unreachable!(),
-        _ => return iter.expectation_error(&[TokenType::Word, TokenType::Quotation, TokenType::TextBlock, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Tilde, TokenType::RightBracket, TokenType::RightAngle]),
+        _ => return iter.expectation_error(&[TokenType::Word, TokenType::Transcription, TokenType::TextBlock, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Tilde, TokenType::RightBracket, TokenType::RightAngle]),
     }
 }
 
@@ -961,7 +996,7 @@ fn parse_bracketed_table(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -
     iter.next();
     iter.skip_whitespace();
     match iter.t0 {
-        Token::Word(..) | Token::Quotation(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) | Token::Bar(..) | Token::RightAngle(..) => {
+        Token::Word(..) | Token::Transcription(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::Diamond(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..) | Token::Bar(..) | Token::RightAngle(..) => {
             let table = parse_table(iter, strings)?;
             iter.skip_whitespace();
             if !matches!(iter.t0, Token::RightSquare(..)) {
@@ -978,22 +1013,26 @@ fn parse_bracketed_table(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -
             Ok(ParsedValue::Table(table, from, to))
         }
         Token::Whitespace(..) => unreachable!(),
-        _ => iter.expectation_error(&[TokenType::Word, TokenType::Quotation, TokenType::TextBlock, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Tilde, TokenType::Bar, TokenType::RightAngle, TokenType::RightSquare]),
+        _ => iter.expectation_error(&[TokenType::Word, TokenType::Transcription, TokenType::TextBlock, TokenType::LeftBracket, TokenType::Diamond, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Tilde, TokenType::Bar, TokenType::RightAngle, TokenType::RightSquare]),
     }
 }
 
 //// Utility
 
-/// Parse a word, quotation or text block.
+fn matches_expression(token: &Token) -> bool {
+    matches!(token, Token::Word(..) | Token::Transcription(..) | Token::TextBlock(..) | Token::LeftBracket(..) | Token::Diamond(..) | Token::LeftSquare(..) | Token::LeftAngle(..) | Token::Tilde(..))
+}
+
+/// Parse a word, transcription or text block.
 ///
-/// Recognizes `<word>`, `<quotation>` and `<text-block>`.
+/// Recognizes `<word>`, `<transcription>` and `<text-block>`.
 fn parse_text_token(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<Rc<str>> {
     match iter.t0 {
-        Token::Word(_, text) | Token::Quotation(_, text) | Token::TextBlock(_, text) => {
+        Token::Word(_, text) | Token::Transcription(_, text) | Token::TextBlock(_, text) => {
             iter.next();
             Ok(store_str(strings, text))
         }
-        _ => iter.expectation_error(&[TokenType::Word, TokenType::Quotation, TokenType::TextBlock]),
+        _ => iter.expectation_error(&[TokenType::Word, TokenType::Transcription, TokenType::TextBlock]),
     }
 }
 
@@ -1014,7 +1053,7 @@ fn store_str(strings: &mut HashSet<Rc<str>>, candidate: &str) -> Rc<str> {
 pub enum ParseError {
     /// Tried to escape EOS.
     EscapingEndOfStream,
-    UnclosedQuotation(Position),
+    UnclosedTranscription(Position),
     ZeroColumns(Position),
     ExpectedColumns(Position, usize, usize),
     /// Expected X but found Y at Z.
@@ -1022,8 +1061,9 @@ pub enum ParseError {
     InvalidEscapeSequence(Position),
     IllegalHashSequence(Position),
     PatternHashName(Position),
-    UnclosedTextBlockTag(Position),
+    UnclosedTextBlock(Position),
     InvalidTextBlockConfiguration(Position),
+    IllegalEscapeCharacter(Position),
 }
 
 impl Debug for ParseError {
@@ -1039,8 +1079,8 @@ pub fn error_to_string(error: &ParseError) -> String {
         ParseError::EscapingEndOfStream => {
             format!("Escaping EOS.")
         }
-        ParseError::UnclosedQuotation(at) => {
-            format!("Unclosed quote at {}:{}.", at.line, at.column)
+        ParseError::UnclosedTranscription(at) => {
+            format!("Unclosed transcription at {}:{}.", at.line, at.column)
         }
         ParseError::ZeroColumns(at) => {
             format!("Row with zero columns at {}:{}.", at.line, at.column)
@@ -1060,11 +1100,14 @@ pub fn error_to_string(error: &ParseError) -> String {
         ParseError::PatternHashName(at) => {
             format!("Pattern name cannot start with hash sign at {}:{}", at.line, at.column)
         }
-        ParseError::UnclosedTextBlockTag(at) => {
-            format!("Encountered end in multiline quote opening at {}:{}", at.line, at.column)
+        ParseError::UnclosedTextBlock(at) => {
+            format!("Unclosed text block at {}:{}", at.line, at.column)
         }
         ParseError::InvalidTextBlockConfiguration(at) => {
-            format!("Encountered invalid configuration in multiline quote opening at {}:{}", at.line, at.column)
+            format!("Encountered invalid configuration in text block at {}:{}", at.line, at.column)
+        }
+        ParseError::IllegalEscapeCharacter(at) => {
+            format!("Illegal escape character at {}:{}", at.line, at.column)
         }
     }
 }
@@ -1093,9 +1136,10 @@ pub enum ParsedValue {
     Nil(Position, Position),
     Text(ParsedText, Position, Position),
     Dictionary(ParsedDictionary, Position, Position),
+    Tuple(ParsedTuple, Position, Position),
     Table(ParsedTable, Position, Position),
     Composition(ParsedComposition, Position, Position),
-    Pattern(ParsedPattern, Position, Position),
+    Tag(ParsedTag, Position, Position),
 }
 
 impl ParsedValue {
@@ -1121,9 +1165,10 @@ impl ParsedValue {
             ParsedValue::Nil(.., from, _) => from,
             ParsedValue::Text(.., from, _) => from,
             ParsedValue::Dictionary(.., from, _) => from,
+            ParsedValue::Tuple(.., from, _) => from,
             ParsedValue::Table(.., from, _) => from,
             ParsedValue::Composition(.., from, _) => from,
-            ParsedValue::Pattern(.., from, _) => from,
+            ParsedValue::Tag(.., from, _) => from,
         }.clone()
     }
 
@@ -1132,15 +1177,32 @@ impl ParsedValue {
             ParsedValue::Nil(.., to) => to,
             ParsedValue::Text(.., to) => to,
             ParsedValue::Dictionary(.., to) => to,
+            ParsedValue::Tuple(.., to) => to,
             ParsedValue::Table(.., to) => to,
             ParsedValue::Composition(.., to) => to,
-            ParsedValue::Pattern(.., to) => to,
+            ParsedValue::Tag(.., to) => to,
         }.clone()
+    }
+
+    pub fn from_tuple(mut values: Vec<ParsedValue>, from: Position, to: Position) -> Self {
+        let len = values.len();
+        if len == 0 {
+            ParsedValue::Tuple(ParsedTuple::Unit, from, to)
+        } else if len == 1 {
+            let value = values.remove(0);
+            if matches!(value, ParsedValue::Tuple(..)) {
+                ParsedValue::Tuple(ParsedTuple::Single(Box::new(value)), from, to)
+            } else {
+                value
+            }
+        } else {
+            ParsedValue::Tuple(ParsedTuple::Multiple(values.into_boxed_slice()), from, to)
+        }
     }
 
 }
 
-impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposition, ParsedPattern> for ParsedValue {
+impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposition, ParsedTuple, ParsedTag> for ParsedValue {
 
     fn as_text(&self) -> Option<&ParsedText> {
         if let ParsedValue::Text(t, ..) = self {
@@ -1152,6 +1214,14 @@ impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposi
 
     fn as_dictionary(&self) -> Option<&ParsedDictionary> {
         if let ParsedValue::Dictionary(d, ..) = self {
+            Some(d)
+        } else {
+            None
+        }
+    }
+
+    fn as_tuple(&self) -> Option<&ParsedTuple> {
+        if let ParsedValue::Tuple(d, _, _) = self {
             Some(d)
         } else {
             None
@@ -1174,8 +1244,8 @@ impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposi
         }
     }
 
-    fn as_tag(&self) -> Option<&ParsedPattern> {
-        if let ParsedValue::Pattern(d, ..) = self {
+    fn as_tag(&self) -> Option<&ParsedTag> {
+        if let ParsedValue::Tag(d, ..) = self {
             Some(d)
         } else {
             None
@@ -1194,6 +1264,10 @@ impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposi
         matches!(self, ParsedValue::Dictionary(..))
     }
 
+    fn is_tuple(&self) -> bool {
+        matches!(self, ParsedValue::Tuple(..))
+    }
+
     fn is_table(&self) -> bool {
         matches!(self, ParsedValue::Table(..))
     }
@@ -1203,7 +1277,26 @@ impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposi
     }
 
     fn is_tag(&self) -> bool {
-        matches!(self, ParsedValue::Pattern(..))
+        matches!(self, ParsedValue::Tag(..))
+    }
+
+    fn unfold(&self) -> Box<[&ParsedValue]> {
+        match self {
+            ParsedValue::Tuple(tuple, _, _) => {
+                match tuple {
+                    ParsedTuple::Unit => vec![].into_boxed_slice(),
+                    ParsedTuple::Single(s) => vec![s.as_ref()].into_boxed_slice(),
+                    ParsedTuple::Multiple(m) => {
+                        let mut v = vec![];
+                        for e in m.iter() {
+                            v.push(e);
+                        }
+                        v.into_boxed_slice()
+                    }
+                }
+            }
+            single => vec![single].into_boxed_slice()
+        }
     }
 
 }
@@ -1213,7 +1306,7 @@ impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposi
 #[derive(PartialEq, Eq, Clone)]
 pub struct ParsedText { pub str: Rc<str> }
 
-impl Text<ParsedValue, Self, ParsedDictionary, ParsedTable, ParsedComposition, ParsedPattern> for ParsedText {
+impl Text<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposition, ParsedTuple, ParsedTag> for ParsedText {
 
     fn as_str(&self) -> &str {
         &self.str
@@ -1237,7 +1330,7 @@ impl ParsedDictionary {
 
 }
 
-impl Dictionary<ParsedValue, ParsedText, Self, ParsedTable, ParsedComposition, ParsedPattern> for ParsedDictionary {
+impl Dictionary<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposition, ParsedTuple, ParsedTag> for ParsedDictionary {
 
     type EntryIterator<'b> = EntryIterator<'b>;
 
@@ -1282,6 +1375,85 @@ impl <'a> Iterator for EntryIterator<'a> {
 
 }
 
+//// Tuple
+
+/// A parsed tuple.
+#[derive(Clone)]
+pub enum ParsedTuple {
+    Unit,
+    Single(Box<ParsedValue>), // Value must be a ParsedTuple
+    Multiple(Box<[ParsedValue]>),
+}
+
+impl Tuple<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposition, Self, ParsedTag> for ParsedTuple {
+
+    type TupleIterator<'b> = TupleIterator<'b>;
+
+    fn len(&self) -> usize {
+        match self {
+            ParsedTuple::Unit => 0,
+            ParsedTuple::Single(_) => 1,
+            ParsedTuple::Multiple(m) => m.len(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        matches!(self, ParsedTuple::Unit)
+    }
+
+    fn get(&self, index: usize) -> Option<&ParsedValue> {
+        match self {
+            ParsedTuple::Unit => None,
+            ParsedTuple::Single(v) => {
+                Some(v.as_ref())
+            }
+            ParsedTuple::Multiple(m) => {
+                m.get(index)
+            }
+        }
+    }
+
+    fn iter(&self) -> Self::TupleIterator<'_> {
+        match self {
+            ParsedTuple::Unit => TupleIterator::Unit,
+            ParsedTuple::Single(v) => TupleIterator::Single(false, v),
+            ParsedTuple::Multiple(m) => TupleIterator::Multiple(0, m.as_ref()),
+        }
+    }
+
+}
+
+pub enum TupleIterator<'a> {
+    Unit,
+    Single(bool, &'a ParsedValue),
+    Multiple(usize, &'a [ParsedValue]),
+}
+
+impl <'a> Iterator for TupleIterator<'a> {
+
+    type Item = &'a ParsedValue;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            TupleIterator::Unit => None,
+            TupleIterator::Single(done, v) => {
+                if *done {
+                    None
+                } else {
+                    *done = true;
+                    Some(v)
+                }
+            }
+            TupleIterator::Multiple(index, v) => {
+                let v = v.get(*index);
+                *index += 1;
+                v
+            }
+        }
+    }
+
+}
+
 //// Table
 
 /// A parsed table.
@@ -1300,7 +1472,7 @@ impl ParsedTable {
 
 }
 
-impl Table<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposition, ParsedPattern> for ParsedTable {
+impl Table<ParsedValue, ParsedText, ParsedDictionary, Self, ParsedComposition, ParsedTuple, ParsedTag> for ParsedTable {
 
     type RowIterator<'b> = RowIterator<'b>;
 
@@ -1328,10 +1500,6 @@ impl Table<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposi
 
     fn is_list(&self) -> bool {
         self.columns <= 1
-    }
-
-    fn is_tuple(&self) -> bool {
-        self.rows() <= 1
     }
 
     fn get_entry(&self, row: usize, column: usize) -> Option<&ParsedValue> {
@@ -1393,7 +1561,7 @@ impl ParsedComposition {
 
 }
 
-impl Composition<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, Self, ParsedPattern> for ParsedComposition {
+impl Composition<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, Self, ParsedTuple, ParsedTag> for ParsedComposition {
 
     type ElementIterator<'b> = ElementIterator<'b>;
 
@@ -1452,15 +1620,13 @@ impl <'b> Iterator for ElementIterator<'b> {
 
 /// A parsed pattern.
 #[derive(Clone)]
-pub struct ParsedPattern {
+pub struct ParsedTag {
     pub name: Rc<str>,
     pub attributes: Vec<ParsedAttribute>,
-    pub patterns: Vec<ParsedValue>,
+    pub value: Box<ParsedValue>,
 }
 
-impl Tag<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposition, Self> for ParsedPattern {
-
-    type ArgumentIterator<'b> = Iter<'b, ParsedValue>;
+impl Tag<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposition, ParsedTuple, Self> for ParsedTag {
 
     type AttributeIterator<'b> = AttributeIterator<'b>;
 
@@ -1468,20 +1634,8 @@ impl Tag<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedCompositi
         &self.name
     }
 
-    fn len(&self) -> usize {
-        self.patterns.len()
-    }
-
     fn has_attributes(&self) -> bool {
         !self.attributes.is_empty()
-    }
-
-    fn has_parameters(&self) -> bool {
-        !self.patterns.is_empty()
-    }
-
-    fn get(&self, index: usize) -> Option<&ParsedValue> {
-        self.patterns.get(index)
     }
 
     fn get_attribute_by(&self, key: &str) -> Option<AttributeValue<'_>> {
@@ -1507,12 +1661,12 @@ impl Tag<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedCompositi
         }
     }
 
-    fn iter(&self) -> Self::ArgumentIterator<'_> {
-        self.patterns.iter()
-    }
-
     fn iter_attributes(&self) -> Self::AttributeIterator<'_> {
         AttributeIterator { iter: self.attributes.iter() }
+    }
+
+    fn get(&self) -> &ParsedValue {
+        &self.value
     }
 
 }
@@ -1554,8 +1708,8 @@ impl <'a> Iterator for AttributeIterator<'a> {
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub enum TokenType {
-    Whitespace, Word, Quotation, TextBlock,
-    Colon, Semicolon, Bar, Tilde, Diamond,
+    Whitespace, Word, Transcription, TextBlock,
+    Colon, DoubleColon, Semicolon, Bar, Tilde, Diamond,
     LeftBracket, RightBracket, LeftSquare, RightSquare, LeftAngle, RightAngle,
     End,
 }
@@ -1566,9 +1720,10 @@ impl Display for TokenType {
         match self {
             TokenType::Whitespace => write!(f, "Whitespace"),
             TokenType::Word => write!(f, "Word"),
-            TokenType::Quotation => write!(f, "Quotation"),
+            TokenType::Transcription => write!(f, "Transcription"),
             TokenType::TextBlock => write!(f, "TextBlock"),
             TokenType::Colon => write!(f, ":"),
+            TokenType::DoubleColon => write!(f, "::"),
             TokenType::Semicolon => write!(f, ";"),
             TokenType::Bar => write!(f, "|"),
             TokenType::Tilde => write!(f, "~"),
@@ -1591,9 +1746,10 @@ impl Token {
         match self {
             Token::Whitespace(..) => TokenType::Whitespace,
             Token::Word(..) => TokenType::Word,
-            Token::Quotation(..) => TokenType::Quotation,
+            Token::Transcription(..) => TokenType::Transcription,
             Token::TextBlock(..) => TokenType::TextBlock,
             Token::Colon(..) => TokenType::Colon,
+            Token::DoubleColon(..) => TokenType::DoubleColon,
             Token::Semicolon(..) => TokenType::Semicolon,
             Token::Bar(..) => TokenType::Bar,
             Token::Tilde(..) => TokenType::Tilde,

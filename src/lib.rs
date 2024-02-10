@@ -30,21 +30,25 @@ pub mod tex;
 /// - nil
 /// - text
 /// - dictionary
+/// - tuple
 /// - table
 /// - composition
 /// - tag
 pub trait Value<
-    Vl: Value<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Tx: Text<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Tb: Table<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Vl: Value<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tx: Text<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tb: Table<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tp: Tuple<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
 > {
     /// Get as text.
     fn as_text(&self) -> Option<&Tx>;
     /// Get as a dictionary.
     fn as_dictionary(&self) -> Option<&Dc>;
+    /// Get as a tuple.
+    fn as_tuple(&self) -> Option<&Tp>;
     /// Get as a table.
     fn as_table(&self) -> Option<&Tb>;
     /// Get as a composition.
@@ -57,34 +61,40 @@ pub trait Value<
     fn is_text(&self) -> bool;
     /// Check if this is a dictionary.
     fn is_dictionary(&self) -> bool;
+    /// Check if this is a tuple.
+    fn is_tuple(&self) -> bool;
     /// Check if this is a table.
     fn is_table(&self) -> bool;
     /// Check if this is a composition.
     fn is_composition(&self) -> bool;
     /// Check if this is a tag.
     fn is_tag(&self) -> bool;
+    /// Interprets this value as a tuple and gets the components.
+    fn unfold(&self) -> Box<[&Vl]>;
 }
 
 /// Text.
 pub trait Text<
-    Vl: Value<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Tx: Text<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Tb: Table<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Vl: Value<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tx: Text<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tb: Table<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tp: Tuple<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
 > {
     fn as_str(&self) -> &str;
 }
 
 /// A dictionary.
 pub trait Dictionary<
-    Vl: Value<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Tx: Text<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Tb: Table<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Vl: Value<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tx: Text<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tb: Table<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tp: Tuple<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
 > {
     type EntryIterator<'b>: Iterator<Item=Entry<'b, Vl>> where Self: 'b, Vl: 'b;
     /// Number of entries in this dictionary.
@@ -100,14 +110,36 @@ pub trait Dictionary<
 /// A dictionary entry.
 pub struct Entry<'a, St>(&'a str, &'a St);
 
+/// A tuple.
+pub trait Tuple<
+    Vl: Value<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tx: Text<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tb: Table<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tp: Tuple<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+> {
+    type TupleIterator<'b>: Iterator<Item=&'b Vl> where Self: 'b, Vl: 'b;
+    /// Number of elements in the tuple.
+    fn len(&self) -> usize;
+    /// Check if this tuple is empty.
+    fn is_empty(&self) -> bool;
+    /// Get the element at an index.
+    fn get(&self, index: usize) -> Option<&Vl>;
+    /// Iterate over the elements in this tuple.
+    fn iter(&self) -> Self::TupleIterator<'_>;
+}
+
 /// A table.
 pub trait Table<
-    Vl: Value<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Tx: Text<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Tb: Table<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Vl: Value<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tx: Text<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tb: Table<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tp: Tuple<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
 > {
     /// Iterator over the rows in a table.
     type RowIterator<'b>: Iterator<Item=Box<[&'b Vl]>> where Self: 'b, Vl: 'b;
@@ -124,11 +156,9 @@ pub trait Table<
     /// Check if this table is a list.
     ///
     /// A list is a table with a single column.
-    fn is_list(&self) -> bool;
-    /// Check if this table is a tuple.
     ///
-    /// A tuple is a table with a single row.
-    fn is_tuple(&self) -> bool;
+    /// The entries of the list can be iterated over with [self.iter_entries].
+    fn is_list(&self) -> bool;
     /// Get the entry at indices.
     fn get_entry(&self, row: usize, column: usize) -> Option<&Vl>;
     /// Get the row at an index.
@@ -141,35 +171,28 @@ pub trait Table<
 
 /// A tag.
 pub trait Tag<
-    Vl: Value<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Tx: Text<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Tb: Table<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tg>,
-    Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tg>,
+    Vl: Value<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tx: Text<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tb: Table<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tp: Tuple<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
 > {
-    /// Iterator over tag parameters.
-    type ArgumentIterator<'b>: Iterator<Item=&'b Vl> + 'b where Self: 'b, Vl: 'b;
     /// Iterator over tag attributes.
     type AttributeIterator<'b>: Iterator<Item=Attribute<'b>> + 'b where Self: 'b;
     /// Name of the tag.
     fn name(&self) -> &str;
-    /// Number of parameters.
-    fn len(&self) -> usize;
     /// Check if this tag has attributes.
     fn has_attributes(&self) -> bool;
-    /// Check if this tag has parameters.
-    fn has_parameters(&self) -> bool;
-    /// Get the parameter at an index.
-    fn get(&self, index: usize) -> Option<&Vl>;
     /// Get the attribute by key.
     fn get_attribute_by(&self, key: &str) -> Option<AttributeValue<'_>>;
     /// Get the attribute by index.
     fn get_attribute_at(&self, index: usize) -> Option<Attribute<'_>>;
-    /// Iterate over the parameters of this tag.
-    fn iter(&self) -> Self::ArgumentIterator<'_>;
     /// Iterate over the attributes of this tag.
     fn iter_attributes(&self) -> Self::AttributeIterator<'_>;
+    /// Get the tagged value.
+    fn get(&self) -> &Vl;
 }
 
 /// An attribute of a tag.
@@ -182,12 +205,13 @@ pub struct AttributeValue<'a>(Option<&'a str>);
 ///
 /// Corresponds to a textual composition of multiple data structures.
 pub trait Composition<
-    Vl: Value<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Tx: Text<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Tb: Table<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Pt>,
-    Pt: Tag<Vl, Tx, Dc, Tb, Cm, Pt>,
+    Vl: Value<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tx: Text<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tb: Table<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tp: Tuple<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
 > {
     /// Iterator over the elements in a composition.
     type ElementIterator<'a>: Iterator<Item=Element<&'a Vl>> where Self: 'a, Vl: 'a;
@@ -207,19 +231,19 @@ pub enum Element<T> {
 
 pub fn translate_escape_character(char: char) -> Result<char, ()> {
     match char {
+        ':' => Ok(':'),
+        ';' => Ok(';'),
+        '|' => Ok('|'),
+        '~' => Ok('~'),
+        '`' => Ok('`'),
+        '\\' => Ok('\\'),
         '{' => Ok('{'),
         '}' => Ok('}'),
         '[' => Ok('['),
         ']' => Ok(']'),
         '<' => Ok('<'),
         '>' => Ok('>'),
-        '"' => Ok('"'),
-        ':' => Ok(':'),
-        ';' => Ok(';'),
-        '|' => Ok('|'),
-        '~' => Ok('~'),
         '#' => Ok('#'),
-        '`' => Ok('`'),
         'n' => Ok('\n'),
         _ => Err(()),
     }

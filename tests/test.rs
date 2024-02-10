@@ -43,24 +43,26 @@ fn test_text_terms() {
     assert_text("Hello\nworld!", "Hello world!");
     assert_text("R e d", "R e d");
     assert_text("R ~ e ~ d", "Red");
-    assert_text("A<#>A  A<#>. A\"A  A\".", "AA  A. AA  A.");
+    assert_text("A<#>A  A<#>. A\\A  A\\.", "AA  A. AA  A.");
 }
 
 #[test]
 fn test_pattern_composition() {
-    let source = "<p1>:arg1:arg2:<>:<p3>:arg4:arg5:<>:<p6>:arg7";
+    let source = "<p1>:arg1:arg2: <p3>:arg4:arg5: <p6>: <p7>:arg8";
     let document = parse_expression_str(source).unwrap();
     assert!(document.is_tag());
     let p1 = document.as_tag().unwrap();
-    assert_eq!(p1.len(), 3);
-    let p1arg = p1.get(2).unwrap();
+    assert_eq!(p1.get().unfold().len(), 3);
+    let p1arg = p1.get().unfold();
+    let p1arg = p1arg.get(2).unwrap();
     assert!(p1arg.is_tag());
     let p2 = p1arg.as_tag().unwrap();
-    assert_eq!(p2.len(), 3);
-    let p2arg = p2.get(2).unwrap();
+    assert_eq!(p2.get().unfold().len(), 3);
+    let p2arg = p2.get().unfold();
+    let p2arg = p2arg.get(2).unwrap();
     assert!(p2arg.is_tag());
-    let p3 = p2arg.as_tag().unwrap();
-    assert_eq!(p3.len(), 1);
+    let p3 = p2arg.as_tag().unwrap().get();
+    assert!(p3.is_tag());
 }
 
 #[test]
@@ -78,25 +80,25 @@ fn test_expression() {
 }
 
 #[test]
-fn test_constructor_notation() {
-    assert_constructor("a a <> b b", 2);
-    assert_constructor("a <> [b] <> {c}", 3);
-    assert_constructor("<a>:b:c <> d d <> <e>:f", 3);
-    assert_pattern("<a> <> b", 1);
-    assert_pattern("<a> <> b b <> c", 2);
+fn test_tuple() {
+    assert_tuple("a a :: b b", 2);
+    assert_tuple("a :: [b] :: {c}", 3);
+    assert_tuple("<a>:b:c :: d d :: <e>:f", 3);
+    assert_pattern("<a> :: b", 1);
+    assert_pattern("<a> :: b b :: c", 2);
 }
 
-fn assert_constructor(source: &str, len: usize) {
+fn assert_tuple(source: &str, len: usize) {
     let expression = parse_expression_str(source).unwrap();
-    let table = expression.as_table().unwrap();
-    assert_eq!(len, table.columns());
+    let tuple = expression.unfold();
+    assert_eq!(tuple.len(), len);
 }
 
 fn assert_pattern(source: &str, len: usize) {
     let document = parse_expression_str(source).unwrap();
     assert!(document.is_tag());
     let pattern = document.as_tag().unwrap();
-    assert_eq!(pattern.len(), len);
+    assert_eq!(pattern.get().unfold().len(), len);
 }
 
 fn assert_terms(source: &str, expect: &str) {
@@ -111,6 +113,7 @@ fn summarize_terms(value: &ParsedValue) -> String {
         ParsedValue::Nil(..) => summary = format!("{}", summary),
         ParsedValue::Text(..) => summary = format!("{}Tx", summary),
         ParsedValue::Dictionary(..) => summary = format!("{}Dc", summary),
+        ParsedValue::Tuple(..) => summary = format!("{}Tp", summary),
         ParsedValue::Table(..) => summary = format!("{}Tb", summary),
         ParsedValue::Composition(composition, ..) => {
             for element in composition.iter() {
@@ -120,51 +123,47 @@ fn summarize_terms(value: &ParsedValue) -> String {
                             ParsedValue::Nil(..) => summary = format!("{}Nl", summary),
                             ParsedValue::Text(..) => summary = format!("{}Tx", summary),
                             ParsedValue::Dictionary(..) => summary = format!("{}Dc", summary),
+                            ParsedValue::Tuple(..) => summary = format!("{}Tp", summary),
                             ParsedValue::Table(..) => summary = format!("{}Tb", summary),
                             ParsedValue::Composition(..) => summary = format!("{}Cm", summary),
-                            ParsedValue::Pattern(..) => summary = format!("{}Pt", summary),
+                            ParsedValue::Tag(..) => summary = format!("{}Pt", summary),
                         }
                     }
                     Element::Space => summary = format!("{} ", summary),
                 }
             }
         }
-        ParsedValue::Pattern(..) => summary = format!("{}Pt", summary),
+        ParsedValue::Tag(..) => summary = format!("{}Pt", summary),
     }
     summary
 }
 
 #[test]
 fn test_escape_sequences() {
-    assert_text("`{", "{");
-    assert_text("`}", "}");
-    assert_text("`[", "[");
-    assert_text("`]", "]");
-    assert_text("`<", "<");
-    assert_text("`>", ">");
-    assert_text("`\"", "\"");
-    assert_text("`:", ":");
-    assert_text("`;", ";");
-    assert_text("`|", "|");
-    assert_text("`~", "~");
-    assert_text("`#", "#");
+    assert_text(":`", ":");
+    assert_text(";`", ";");
+    assert_text("|`", "|");
+    assert_text("~`", "~");
     assert_text("``", "`");
-    assert_text("`n", "\n");
+    assert_text("\\`", "\\");
+    assert_text("{`", "{");
+    assert_text("}`", "}");
+    assert_text("[`", "[");
+    assert_text("]`", "]");
+    assert_text("<`", "<");
+    assert_text(">`", ">");
+    assert_text("#`", "#");
+    assert_text("n`", "\n");
     // Invalid escapes
-    assert_invalid_expression("`a");
-    assert_invalid_expression("`1");
+    assert_invalid_expression("a`");
+    assert_invalid_expression("1`");
+    assert_invalid_expression("`[");
+    assert_invalid_expression("`n");
 }
 
 #[test]
 fn test_repeated_escape_sequences() {
-    assert_terms("::", "Tx");
-    assert_terms(":::", "Tx");
-    assert_terms(";;", "Tx");
-    assert_terms(";;;", "Tx");
     assert_terms("||", "Tx");
-    assert_terms("|||", "Tx");
-    assert_terms("~~", "Tx");
-    assert_terms("~~~", "Tx");
     assert_terms("<<", "Tx");
     assert_terms("<<<", "Tx");
     assert_terms(">>", "Tx");
@@ -177,7 +176,7 @@ fn test_hash() {
     assert_terms("#a", "Tx");
     assert_terms("#1", "Tx");
     assert_terms("#?", "Tx");
-    assert_terms("#`:", "Tx");
+    assert_terms("#:`", "Tx");
     assert_terms("#>>", "Tx");
     assert_terms("A#B", "Tx");
     // Comments
@@ -191,7 +190,7 @@ fn test_hash() {
     assert_invalid_expression("#]");
     assert_invalid_expression("#<");
     assert_invalid_expression("#>");
-    assert_invalid_expression("#\"");
+    assert_invalid_expression("#\\");
     assert_invalid_expression("#:");
     assert_invalid_expression("#;");
     assert_invalid_expression("#|");
@@ -275,10 +274,10 @@ fn assert_invalid_table(source: &str) {
 }
 
 #[test]
-fn test_quotation() {
-    assert_text("\"a b c\"", "a b c");
-    assert_text("\" a b  c d  e f  g h \"", " a b  c d  e f  g h ");
-    assert!(parse_expression_str("\"a b\nc d\"").is_err());
+fn test_transcription() {
+    assert_text("\\a b c\\", "a b c");
+    assert_text("\\ a b  c d  e f  g h \\", " a b  c d  e f  g h ");
+    assert!(parse_expression_str("\\a b\nc d\\").is_err());
 }
 
 #[test]

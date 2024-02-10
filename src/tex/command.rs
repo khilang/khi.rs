@@ -57,6 +57,9 @@ fn preprocess() -> Result<String, String> {
                 PreprocessorError::MissingOptionalArgument(at) => {
                     Err(format!("Missing optional argument at {}:{}.", at.line, at.column))
                 }
+                PreprocessorError::IllegalTuple(at) => {
+                    Err(format!("Illegal tuple at {}:{}.", at.line, at.column))
+                }
             },
         }
     } else {

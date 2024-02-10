@@ -165,20 +165,35 @@
   | f
 ]
 
-## Pattern
+## Tagged value
 
-### Inline pattern within expression
-<P>:a:{b b}:c
+### Inline tag
+<A>:a:{b b}:c
 
-### Multiline pattern within expression
-<P>:a:{b b}:{
+### Multiline tag, singleline header
+<A>:a:{b b}:{
+  c c c
   c c c
 }
+
+### Tag composition
+<A>:b:c: <D>:e: <F>:g:h: <I>:{
+  j j j j j
+}
+
+### Singleline tag expression
+<A> :: a :: b b :: c
+
+### Multiline tag, singleline header expression
+### :: are only on the first line.
+<A> :: a :: b b b b :: [
+  c c c c c
+]
 
 ## Expressions
 
 ### Inline expression
-{a a a{} {c c c} d d d}
+{a a a[] {c c c} d d d}
 
 ### Multiline expression
 {
@@ -188,22 +203,32 @@
   k k k k
 }
 
-## Constructor notation
+## Tuple
 
-### Inline pattern constructor
-<P> <> a <> b b <> c
+### Inline tuple
+<>:a:{b b b}:[c]
 
-### Multiline pattern constructor
-<P> <> a <> b b b b <> [
+### Multiline tuple, singleline header
+<>:a:{b b b}:[
   c c c c c
+  c c c c c c
 ]
 
-### Singleline tuple constructor
-a a a <> b b <> c c c c c <> d <> e e e
+### Multiline tuple expression
+:: a a a
+:: {b b b}
+:: c
+:: {
+  d d d d d
+  d d d
+}
+:: e e e e
 
-### Multiline tuple constructor
-a a a <> {b b b} <> c <> d d <> {
-  g g
-  g g
-  g g g
+### Singleline tuple expression
+a a a :: {b b b} :: c c
+
+### Multiline tuple, singleline header expression
+a a a :: {b b b} :: c :: {
+  d d d d d
+  d d d
 }
