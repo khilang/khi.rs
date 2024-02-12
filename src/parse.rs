@@ -229,7 +229,6 @@ fn parse_table_document(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) ->
 ///
 /// ```text
 /// <expression> = <expression'>
-///              | "::"
 ///              | "::" <expression'>
 /// <expression'> = <expression''>
 ///               | <expression''> "::" <expression'>
@@ -253,41 +252,69 @@ fn parse_table_document(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) ->
 ///                | "~" <expression''>
 /// ```
 fn parse_expression(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedValue> {
+    enum Head { None, Tuple, Tag(Rc<str>, Vec<ParsedAttribute>) }
     if !matches_expression(iter.t0) {
         return expression_error(iter.t0, iter.at());
     }
+    let from = iter.at();
+    let head;
+    let mut argfrom = from;
+    let mut tail = vec![];
     if matches!(iter.t0, Token::DoubleColon(..)) {
+        head = Head::None;
+    } else {
+        match parse_term_sequence(iter, strings)? {
+            ParsedValue::Tuple(t, from, to) => {
+                if t.is_empty() {
+                    head = Head::Tuple;
+                } else {
+                    head = Head::None;
+                    tail.push(ParsedValue::Tuple(t, from, to));
+                }
+            }
+            ParsedValue::Tag(t, from, to) => {
+                if t.value.is_unit() {
+                    head = Head::Tag(t.name, t.attributes);
+                } else {
+                    head = Head::None;
+                    tail.push(ParsedValue::Tag(t, from, to));
+                }
+            }
+            x => {
+                head = Head::None;
+                tail.push(x);
+            }
+        }
+    }
+    if matches!(iter.peek_next_glyph_token(), Token::DoubleColon(..)) {
+        iter.skip_whitespace();
         iter.next();
         iter.skip_whitespace();
+        argfrom = iter.at();
+        let e = parse_term_sequence(iter, strings)?;
+        tail.push(e);
     }
-    let from = iter.at();
-    let head = parse_term_sequence(iter, strings)?;
-    if !matches!(iter.peek_next_glyph_token(), Token::DoubleColon(..)) {
-        return Ok(head);
-    }
-    let mut tail = vec![];
     loop {
+        if !matches!(iter.peek_next_glyph_token(), Token::DoubleColon(..)) {
+            break;
+        }
         iter.skip_whitespace();
         iter.next();
         iter.skip_whitespace();
         let e = parse_term_sequence(iter, strings)?;
         tail.push(e);
-        if !matches!(iter.peek_next_glyph_token(), Token::DoubleColon(..)) {
-            break;
-        }
     }
     let to = iter.at();
-    if let ParsedValue::Tag(ParsedTag { name, attributes, value: head_value }, from, to) = head {
-        if head_value.unfold().is_empty() {
-            let value = ParsedValue::from_tuple(tail, from, to);
-            return Ok(ParsedValue::Tag(ParsedTag { name, attributes, value: Box::new(value) }, from, to));
-        } else {
-            tail.insert(0, ParsedValue::Tag(ParsedTag { name, attributes, value: head_value }, from, to));
+    let e = match head {
+        Head::None | Head::Tuple => {
+            ParsedValue::from_tuple(tail, from, to)
         }
-    } else {
-        tail.insert(0, head);
-    }
-    Ok(ParsedValue::from_tuple(tail, from, to))
+        Head::Tag(name, attributes) => {
+            let value = ParsedValue::from_tuple(tail, argfrom, to);
+            ParsedValue::Tag(ParsedTag { name, attributes, value: Box::new(value) }, from, to)
+        }
+    };
+    Ok(e)
 }
 
 fn parse_term_sequence(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedValue> {
@@ -899,7 +926,7 @@ fn parse_arguments(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Resu
                 arguments.push(inner);
                 break;
             }
-            _ => return iter.expectation_error(&[TokenType::Word, TokenType::Transcription, TokenType::TextBlock, TokenType::LeftBracket, TokenType::Diamond, TokenType::LeftSquare, TokenType::LeftAngle]),
+            _ => return iter.expectation_error(&[TokenType::Word, TokenType::Transcription, TokenType::TextBlock, TokenType::LeftBracket, TokenType::Diamond, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Whitespace]),
         }
         match iter.t0 {
             Token::Colon(..) => iter.next(),
@@ -1152,9 +1179,9 @@ pub enum ParsedValue {
     Nil(Position, Position),
     Text(ParsedText, Position, Position),
     Dictionary(ParsedDictionary, Position, Position),
-    Tuple(ParsedTuple, Position, Position),
     Table(ParsedTable, Position, Position),
     Composition(ParsedComposition, Position, Position),
+    Tuple(ParsedTuple, Position, Position),
     Tag(ParsedTag, Position, Position),
 }
 
@@ -1181,9 +1208,9 @@ impl ParsedValue {
             ParsedValue::Nil(.., from, _) => from,
             ParsedValue::Text(.., from, _) => from,
             ParsedValue::Dictionary(.., from, _) => from,
-            ParsedValue::Tuple(.., from, _) => from,
             ParsedValue::Table(.., from, _) => from,
             ParsedValue::Composition(.., from, _) => from,
+            ParsedValue::Tuple(.., from, _) => from,
             ParsedValue::Tag(.., from, _) => from,
         }.clone()
     }
@@ -1193,9 +1220,9 @@ impl ParsedValue {
             ParsedValue::Nil(.., to) => to,
             ParsedValue::Text(.., to) => to,
             ParsedValue::Dictionary(.., to) => to,
-            ParsedValue::Tuple(.., to) => to,
             ParsedValue::Table(.., to) => to,
             ParsedValue::Composition(.., to) => to,
+            ParsedValue::Tuple(.., to) => to,
             ParsedValue::Tag(.., to) => to,
         }.clone()
     }
@@ -1214,6 +1241,10 @@ impl ParsedValue {
         } else {
             ParsedValue::Tuple(ParsedTuple::Multiple(values.into_boxed_slice()), from, to)
         }
+    }
+
+    pub fn is_unit(&self) -> bool {
+        matches!(self, ParsedValue::Tuple(ParsedTuple::Unit, ..))
     }
 
 }

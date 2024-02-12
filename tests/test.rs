@@ -84,8 +84,15 @@ fn test_tuple() {
     assert_tuple("a a :: b b", 2);
     assert_tuple("a :: [b] :: {c}", 3);
     assert_tuple("<a>:b:c :: d d :: <e>:f", 3);
+    assert_tuple("<> :: a", 1);
+    assert_tuple("<> :: a :: b", 2);
+    assert_tuple(":: d d :: <e>:f", 2);
     assert_pattern("<a> :: b", 1);
     assert_pattern("<a> :: b b :: c", 2);
+
+    assert_tuple("<>: <>: <>: <>", 1);
+    assert_tuple("<>: <>: <>:{ <> }", 1);
+    assert_tuple("<>: <>: <>:{ a :: b }", 1);
 }
 
 fn assert_tuple(source: &str, len: usize) {
