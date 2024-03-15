@@ -81,14 +81,14 @@ fn test_expression() {
 
 #[test]
 fn test_tuple() {
-    assert_tuple("a a :: b b", 2);
-    assert_tuple("a :: [b] :: {c}", 3);
-    assert_tuple("<a>:b:c :: d d :: <e>:f", 3);
-    assert_tuple("<> :: a", 1);
-    assert_tuple("<> :: a :: b", 2);
-    assert_tuple(":: d d :: <e>:f", 2);
-    assert_pattern("<a> :: b", 1);
-    assert_pattern("<a> :: b b :: c", 2);
+    assert_tuple("a a : b b", 2);
+    assert_tuple("a : [b] : {c}", 3);
+    assert_tuple("<a>:b:c : d d : <e>:f", 3);
+    assert_tuple("<> : a", 1);
+    assert_tuple("<> : a : b", 2);
+    assert_tuple(": d d\n: <e>:f", 2);
+    assert_pattern("<a> : b", 1);
+    assert_pattern("<a> : b b : c", 2);
 
     assert_tuple("<>: <>: <>: <>", 1);
     assert_tuple("<>: <>: <>:{ <> }", 1);
@@ -147,34 +147,35 @@ fn summarize_terms(value: &ParsedValue) -> String {
 
 #[test]
 fn test_escape_sequences() {
-    assert_text(":`", ":");
-    assert_text(";`", ";");
-    assert_text("|`", "|");
-    assert_text("~`", "~");
+    assert_text("`:", ":");
+    assert_text("`;", ";");
+    assert_text("`|", "|");
+    assert_text("`~", "~");
     assert_text("``", "`");
-    assert_text("\\`", "\\");
-    assert_text("{`", "{");
-    assert_text("}`", "}");
-    assert_text("[`", "[");
-    assert_text("]`", "]");
-    assert_text("<`", "<");
-    assert_text(">`", ">");
-    assert_text("#`", "#");
-    assert_text("n`", "\n");
+    assert_text("`\\", "\\");
+    assert_text("`{", "{");
+    assert_text("`}", "}");
+    assert_text("`[", "[");
+    assert_text("`]", "]");
+    assert_text("`<", "<");
+    assert_text("`>", ">");
+    assert_text("`#", "#");
+    assert_text("`n", "\n");
     // Invalid escapes
-    assert_invalid_expression("a`");
-    assert_invalid_expression("1`");
-    assert_invalid_expression("`[");
-    assert_invalid_expression("`n");
+    assert_invalid_expression("`a");
+    assert_invalid_expression("`1");
+    assert_invalid_expression("[`");
+    assert_invalid_expression("n`");
 }
 
 #[test]
 fn test_repeated_escape_sequences() {
+    assert_terms("::", "Tx");
+    assert_terms(";;", "Tx");
     assert_terms("||", "Tx");
+    assert_terms("~~", "Tx");
     assert_terms("<<", "Tx");
-    assert_terms("<<<", "Tx");
     assert_terms(">>", "Tx");
-    assert_terms(">>>", "Tx");
 }
 
 #[test]
@@ -183,7 +184,7 @@ fn test_hash() {
     assert_terms("#a", "Tx");
     assert_terms("#1", "Tx");
     assert_terms("#?", "Tx");
-    assert_terms("#:`", "Tx");
+    assert_terms("#`:", "Tx");
     assert_terms("#>>", "Tx");
     assert_terms("A#B", "Tx");
     // Comments
@@ -191,17 +192,17 @@ fn test_hash() {
     assert_terms("# ", "");
     assert_terms("#", "");
     // Invalid sequence
+    assert_invalid_expression("#:");
+    assert_invalid_expression("#;");
+    assert_invalid_expression("#|");
+    assert_invalid_expression("#~");
+    assert_invalid_expression("#\\");
     assert_invalid_expression("#{");
     assert_invalid_expression("#}");
     assert_invalid_expression("#[");
     assert_invalid_expression("#]");
     assert_invalid_expression("#<");
     assert_invalid_expression("#>");
-    assert_invalid_expression("#\\");
-    assert_invalid_expression("#:");
-    assert_invalid_expression("#;");
-    assert_invalid_expression("#|");
-    assert_invalid_expression("#~");
 }
 
 fn assert_invalid_expression(source: &str) {
@@ -284,7 +285,7 @@ fn assert_invalid_table(source: &str) {
 fn test_transcription() {
     assert_text("\\a b c\\", "a b c");
     assert_text("\\ a b  c d  e f  g h \\", " a b  c d  e f  g h ");
-    assert!(parse_expression_str("\\a b\nc d\\").is_err());
+    assert_text("\\a b\nc d\\ e f", "a bc d e f");
 }
 
 #[test]
