@@ -22,9 +22,10 @@ pub mod tex;
 //mod fmt;
 //mod model;
 
-/// A structure value.
+/// A value.
 ///
-/// Corresponds to a real data structure.
+/// Corresponds to something that can be an element of a tuple, such as a real data
+/// structure.
 ///
 /// Is one of:
 /// - nil
@@ -32,14 +33,14 @@ pub mod tex;
 /// - dictionary
 /// - tuple
 /// - table
-/// - composition
+/// - compound
 /// - tag
 pub trait Value<
     Vl: Value<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tx: Text<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tb: Table<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
-    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Cm: Compound<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tp: Tuple<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
 > {
@@ -51,8 +52,8 @@ pub trait Value<
     fn as_tuple(&self) -> Option<&Tp>;
     /// Get as a table.
     fn as_table(&self) -> Option<&Tb>;
-    /// Get as a composition.
-    fn as_composition(&self) -> Option<&Cm>;
+    /// Get as a compound.
+    fn as_compound(&self) -> Option<&Cm>;
     /// Get as a tag.
     fn as_tag(&self) -> Option<&Tg>;
     /// Check if this is nil.
@@ -65,8 +66,8 @@ pub trait Value<
     fn is_tuple(&self) -> bool;
     /// Check if this is a table.
     fn is_table(&self) -> bool;
-    /// Check if this is a composition.
-    fn is_composition(&self) -> bool;
+    /// Check if this is a compound.
+    fn is_compound(&self) -> bool;
     /// Check if this is a tag.
     fn is_tag(&self) -> bool;
     /// Interprets this value as a tuple and gets the components.
@@ -79,7 +80,7 @@ pub trait Text<
     Tx: Text<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tb: Table<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
-    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Cm: Compound<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tp: Tuple<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
 > {
@@ -92,7 +93,7 @@ pub trait Dictionary<
     Tx: Text<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tb: Table<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
-    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Cm: Compound<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tp: Tuple<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
 > {
@@ -116,7 +117,7 @@ pub trait Tuple<
     Tx: Text<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tb: Table<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
-    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Cm: Compound<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tp: Tuple<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
 > {
@@ -137,7 +138,7 @@ pub trait Table<
     Tx: Text<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tb: Table<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
-    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Cm: Compound<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tp: Tuple<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
 > {
@@ -175,7 +176,7 @@ pub trait Tag<
     Tx: Text<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tb: Table<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
-    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Cm: Compound<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tp: Tuple<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
 > {
@@ -201,29 +202,29 @@ pub struct Attribute<'a>(&'a str, Option<&'a str>);
 /// An attribute value of a tag.
 pub struct AttributeValue<'a>(Option<&'a str>);
 
-/// A composition.
+/// A compound.
 ///
 /// Corresponds to a textual composition of multiple data structures.
-pub trait Composition<
+pub trait Compound<
     Vl: Value<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tx: Text<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Dc: Dictionary<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tb: Table<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
-    Cm: Composition<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
+    Cm: Compound<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tp: Tuple<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
     Tg: Tag<Vl, Tx, Dc, Tb, Cm, Tp, Tg>,
 > {
-    /// Iterator over the elements in a composition.
+    /// Iterator over the elements in a compound.
     type ElementIterator<'a>: Iterator<Item=Element<&'a Vl>> where Self: 'a, Vl: 'a;
-    /// Number of elements in this composition.
+    /// Number of elements in this compound.
     fn len(&self) -> usize;
     /// Get the element at an index.
     fn get(&self, index: usize) -> Option<Element<&Vl>>;
-    /// Iterate over the elements in this composition.
+    /// Iterate over the elements in this compound.
     fn iter(&self) -> Self::ElementIterator<'_>;
 }
 
-/// An element in a composition.
+/// An element in a compound.
 pub enum Element<T> {
     Solid(T),
     Space,

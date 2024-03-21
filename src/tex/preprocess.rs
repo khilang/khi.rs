@@ -9,7 +9,7 @@
 use std::fmt::Write;
 use crate::lex::Position;
 use crate::parse::{ParsedValue, ParsedTag, ParsedTable};
-use crate::{Tag, Table, Text, Element, Composition, Value};
+use crate::{Tag, Table, Text, Element, Compound, Value};
 
 pub fn write_tex(structure: &ParsedValue) -> Result<String, PreprocessorError> {
     let mut output = String::new();
@@ -163,9 +163,9 @@ impl Writer<'_> {
                 self.break_opportunity(*at);
                 self.write_tabulation(table, *at)?;
             }
-            ParsedValue::Composition(composition, at, _) => {
+            ParsedValue::Compound(compound, at, _) => {
                 self.break_opportunity(*at);
-                for element in composition.iter() {
+                for element in compound.iter() {
                     match element {
                         Element::Solid(solid) => {
                             match solid {
@@ -192,7 +192,7 @@ impl Writer<'_> {
                                     self.break_opportunity(*at);
                                     self.write_tabulation(&table, *at)?;
                                 }
-                                ParsedValue::Composition(composition, at, _) => {
+                                ParsedValue::Compound(compound, at, _) => {
                                     self.break_opportunity(*at);
                                     self.push('{');
                                     self.write_inner(solid)?;
@@ -201,9 +201,9 @@ impl Writer<'_> {
                                 ParsedValue::Tuple(_, at, _) => {
                                     return Err(PreprocessorError::IllegalTuple(*at));
                                 }
-                                ParsedValue::Tag(pattern, at, _) => {
+                                ParsedValue::Tag(tag, at, _) => {
                                     self.break_opportunity(*at);
-                                    self.write_macro(pattern, *at)?;
+                                    self.write_macro(tag, *at)?;
                                 }
                             }
                         }
@@ -217,9 +217,9 @@ impl Writer<'_> {
             ParsedValue::Tuple(_, at, _) => {
                 return Err(PreprocessorError::IllegalTuple(*at));
             }
-            ParsedValue::Tag(pattern, at, _) => {
+            ParsedValue::Tag(tag, at, _) => {
                 self.break_opportunity(*at);
-                self.write_macro(pattern, *at)?;
+                self.write_macro(tag, *at)?;
             }
         }
         Ok(())
@@ -244,9 +244,9 @@ impl Writer<'_> {
         Ok(())
     }
 
-    fn write_macro(&mut self, pattern: &ParsedTag, at: Position) -> Result<(), PreprocessorError> {
-        let mut name = pattern.name();
-        let arguments = pattern.get().unfold();
+    fn write_macro(&mut self, tag: &ParsedTag, at: Position) -> Result<(), PreprocessorError> {
+        let mut name = tag.name();
+        let arguments = tag.get().unfold();
         if name.ends_with("!") {
             if name.eq("def!") {
                 if arguments.len() != 3 {
@@ -308,7 +308,7 @@ impl Writer<'_> {
                         ParsedValue::Table(table, at, to) => {
                             return Err(PreprocessorError::IllegalTable(*at));
                         }
-                        ParsedValue::Composition(composition, at, to) => {
+                        ParsedValue::Compound(compound, at, to) => {
                             self.break_opportunity(*at);
                             self.push('[');
                             self.write_inner(argument)?;
@@ -317,10 +317,10 @@ impl Writer<'_> {
                         ParsedValue::Tuple(_, at, _) => {
                             return Err(PreprocessorError::IllegalTuple(*at));
                         }
-                        ParsedValue::Tag(pattern, at, to) => {
+                        ParsedValue::Tag(tag, at, to) => {
                             self.break_opportunity(*at);
                             self.push('[');
-                            self.write_macro(pattern, *at)?;
+                            self.write_macro(tag, *at)?;
                             self.push(']');
                         }
                     }
@@ -352,7 +352,7 @@ impl Writer<'_> {
                     ParsedValue::Table(table, at, to) => {
                         return Err(PreprocessorError::IllegalTable(*at));
                     }
-                    ParsedValue::Composition(composition, at, to) => {
+                    ParsedValue::Compound(compound, at, to) => {
                         self.break_opportunity(*at);
                         self.push('{');
                         self.write_inner(argument)?;
@@ -361,10 +361,10 @@ impl Writer<'_> {
                     ParsedValue::Tuple(_, at, _) => {
                         return Err(PreprocessorError::IllegalTable(*at));
                     }
-                    ParsedValue::Tag(pattern, at, to) => {
+                    ParsedValue::Tag(tag, at, to) => {
                         self.break_opportunity(*at);
                         self.push('{');
-                        self.write_macro(pattern, *at)?;
+                        self.write_macro(tag, *at)?;
                         self.push('}');
                     }
                 }

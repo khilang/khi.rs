@@ -1,12 +1,12 @@
 use std::ops::Deref;
-use crate::{Dictionary, Tag, Value, Text, Element, Entry, Attribute, Composition};
+use crate::{Dictionary, Tag, Value, Text, Element, Entry, Attribute, Compound};
 use crate::lex::Position;
 use crate::parse::{ParsedDictionary, ParsedTag, ParsedValue};
 
 pub fn write_html(value: &ParsedValue) -> Result<String, PreprocessorError> {
     let mut output = String::new();
     let mut writer = XmlWriter { output: &mut output, column: 1, newline: 60, last: LastType::Whitespace, };
-    writer.write_xml_composition(value)?;
+    writer.write_xml_compound(value)?;
     Ok(output)
 }
 
@@ -70,7 +70,7 @@ impl XmlWriter<'_> {
 
 impl XmlWriter<'_> {
 
-    fn write_xml_composition(&mut self, value: &ParsedValue) -> Result<(), PreprocessorError> {
+    fn write_xml_compound(&mut self, value: &ParsedValue) -> Result<(), PreprocessorError> {
         match value {
             ParsedValue::Nil(..) => {}
             ParsedValue::Text(text, ..) => {
@@ -82,10 +82,10 @@ impl XmlWriter<'_> {
             ParsedValue::Table(table, from, to) => {
                 return Err(PreprocessorError::IllegalTable(*from));
             }
-            ParsedValue::Composition(composition, from, to) => {
-                for element in composition.iter() {
+            ParsedValue::Compound(compound, from, to) => {
+                for element in compound.iter() {
                     if let Element::Solid(value) = element {
-                        self.write_xml_composition(value)?;
+                        self.write_xml_compound(value)?;
                     } else {
                         self.push_whitespace();
                     }
@@ -94,19 +94,19 @@ impl XmlWriter<'_> {
             ParsedValue::Tuple(tuple, from, to) => {
                 return Err(PreprocessorError::IllegalTuple(*from));
             }
-            ParsedValue::Tag(pattern, from, to) => {
-                self.write_tag(pattern, *from)?;
+            ParsedValue::Tag(tag, from, to) => {
+                self.write_tag(tag, *from)?;
             }
         }
         Ok(())
     }
 
-    fn write_tag(&mut self, pattern: &ParsedTag, at: Position) -> Result<(), PreprocessorError> {
-        let name = pattern.name();
-        let arguments = pattern.get().unfold();
+    fn write_tag(&mut self, tag: &ParsedTag, at: Position) -> Result<(), PreprocessorError> {
+        let name = tag.name();
+        let arguments = tag.get().unfold();
         if name.ends_with('!') {
             if name.deref() == "doctype!" {
-                if pattern.has_attributes() || arguments.len() != 1 {
+                if tag.has_attributes() || arguments.len() != 1 {
                     return Err(PreprocessorError::MacroError(format!("doctype! macro cannot have attributes and must have 1 argument.")))
                 }
                 let doctype = arguments.get(0).unwrap();
@@ -139,7 +139,7 @@ impl XmlWriter<'_> {
             };
             self.push_non_breaking('<');
             self.push_str_non_breaking(&name);
-            for Attribute(key, value) in pattern.iter_attributes() {
+            for Attribute(key, value) in tag.iter_attributes() {
                 match value {
                     None => {
                         self.push_non_breaking(' ');
@@ -156,7 +156,7 @@ impl XmlWriter<'_> {
             }
             self.push_non_breaking('>');
             if let Some(argument) = argument {
-                self.write_xml_composition(argument)?;
+                self.write_xml_compound(argument)?;
             } else {
                 return Ok(());
             };
@@ -172,7 +172,7 @@ impl XmlWriter<'_> {
             self.push_non_breaking('<');
             self.push_str_non_breaking(key);
             self.push_non_breaking('>');
-            self.write_xml_composition(value)?;
+            self.write_xml_compound(value)?;
             self.push_str_non_breaking("</");
             self.push_str_non_breaking(key);
             self.push_non_breaking('>');

@@ -9,7 +9,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::ops::{Deref};
 use std::rc::Rc;
 use std::slice::Iter;
-use crate::{Dictionary, Tag, Value, Table, Text, Element, Composition, Attribute, AttributeValue, Entry, Tuple};
+use crate::{Dictionary, Tag, Value, Table, Text, Element, Compound, Attribute, AttributeValue, Entry, Tuple};
 use crate::lex::{lex, LexError, Position, Token};
 
 //// Parse
@@ -156,9 +156,6 @@ impl <'a> TokenIter<'a> {
 }
 
 //// Parser
-////
-//// Approximate recursive descent, but with modifications that require no backtracking
-//// or large lookahead.
 
 /// Parse an expression document.
 ///
@@ -778,8 +775,8 @@ fn parse_tag(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<(Rc
     };
     iter.next();
     let name = store_str(strings, name);
-    if name.starts_with("#") { // Pattern name cannot start with a hash sign.
-        return Err(ParseError::PatternHashName(iter.at()));
+    if name.starts_with("#") { // Tag name cannot start with a hash sign.
+        return Err(ParseError::TagHashName(iter.at()));
     }
     if matches!(iter.t0, Token::RightAngle(..)) {
         iter.next();
@@ -839,9 +836,9 @@ fn parse_attributes(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Res
     };
 }
 
-/// Parse a pattern.
+/// Parse a tag.
 ///
-/// Recognizes `<pattern>`.
+/// Recognizes `<tagged-value>`.
 ///
 /// ```text
 /// <tagged-value> = <tag>
@@ -919,8 +916,8 @@ fn parse_arguments(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Resu
                 let (name, attributes) = parse_tag(iter, strings)?;
                 let name = store_str(strings, &name);
                 let to = iter.at();
-                let pattern = ParsedValue::Tag(ParsedTag { name, attributes, value: Box::new(ParsedValue::Nil(to, to)) }, from, to);
-                arguments.push(pattern);
+                let tag = ParsedValue::Tag(ParsedTag { name, attributes, value: Box::new(ParsedValue::Nil(to, to)) }, from, to);
+                arguments.push(tag);
             }
             Token::Whitespace(..) => {
                 iter.skip_whitespace();
@@ -1109,7 +1106,7 @@ pub enum ParseError {
     Expected(&'static[TokenType], TokenType, Position),
     InvalidEscapeSequence(Position),
     IllegalHashSequence(Position),
-    PatternHashName(Position),
+    TagHashName(Position),
     UnclosedTextBlock(Position),
     InvalidTextBlockConfiguration(Position),
     IllegalEscapeCharacter(Position),
@@ -1146,8 +1143,8 @@ pub fn error_to_string(error: &ParseError) -> String {
         ParseError::IllegalHashSequence(at) => {
             format!("Encountered unknown hash sequence at {}:{}.", at.line, at.column)
         }
-        ParseError::PatternHashName(at) => {
-            format!("Pattern name cannot start with hash sign at {}:{}", at.line, at.column)
+        ParseError::TagHashName(at) => {
+            format!("Tag name cannot start with hash sign at {}:{}", at.line, at.column)
         }
         ParseError::UnclosedTextBlock(at) => {
             format!("Unclosed text block at {}:{}", at.line, at.column)
@@ -1174,10 +1171,8 @@ fn list(expected: &[TokenType]) -> String {
 }
 
 //// Parsing results
-////
-//// Parsing a document yields a nested structure consisting of these structures.
 
-//// Value / Structure
+//// Value
 
 /// A parsed value.
 #[derive(Clone)]
@@ -1186,7 +1181,7 @@ pub enum ParsedValue {
     Text(ParsedText, Position, Position),
     Dictionary(ParsedDictionary, Position, Position),
     Table(ParsedTable, Position, Position),
-    Composition(ParsedComposition, Position, Position),
+    Compound(ParsedCompound, Position, Position),
     Tuple(ParsedTuple, Position, Position),
     Tag(ParsedTag, Position, Position),
 }
@@ -1205,7 +1200,7 @@ impl ParsedValue {
             terms.pop().unwrap()
         } else {
             assert_eq!(len - 1, whitespace.len());
-            ParsedValue::Composition(ParsedComposition { components: terms, whitespace }, from, to)
+            ParsedValue::Compound(ParsedCompound { components: terms, whitespace }, from, to)
         }
     }
 
@@ -1215,7 +1210,7 @@ impl ParsedValue {
             ParsedValue::Text(.., from, _) => from,
             ParsedValue::Dictionary(.., from, _) => from,
             ParsedValue::Table(.., from, _) => from,
-            ParsedValue::Composition(.., from, _) => from,
+            ParsedValue::Compound(.., from, _) => from,
             ParsedValue::Tuple(.., from, _) => from,
             ParsedValue::Tag(.., from, _) => from,
         }.clone()
@@ -1227,7 +1222,7 @@ impl ParsedValue {
             ParsedValue::Text(.., to) => to,
             ParsedValue::Dictionary(.., to) => to,
             ParsedValue::Table(.., to) => to,
-            ParsedValue::Composition(.., to) => to,
+            ParsedValue::Compound(.., to) => to,
             ParsedValue::Tuple(.., to) => to,
             ParsedValue::Tag(.., to) => to,
         }.clone()
@@ -1255,7 +1250,7 @@ impl ParsedValue {
 
 }
 
-impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposition, ParsedTuple, ParsedTag> for ParsedValue {
+impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedCompound, ParsedTuple, ParsedTag> for ParsedValue {
 
     fn as_text(&self) -> Option<&ParsedText> {
         if let ParsedValue::Text(t, ..) = self {
@@ -1289,8 +1284,8 @@ impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposi
         }
     }
 
-    fn as_composition(&self) -> Option<&ParsedComposition> {
-        if let ParsedValue::Composition(d, ..) = self {
+    fn as_compound(&self) -> Option<&ParsedCompound> {
+        if let ParsedValue::Compound(d, ..) = self {
             Some(d)
         } else {
             None
@@ -1325,8 +1320,8 @@ impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposi
         matches!(self, ParsedValue::Table(..))
     }
 
-    fn is_composition(&self) -> bool {
-        matches!(self, ParsedValue::Composition(..))
+    fn is_compound(&self) -> bool {
+        matches!(self, ParsedValue::Compound(..))
     }
 
     fn is_tag(&self) -> bool {
@@ -1359,7 +1354,7 @@ impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposi
 #[derive(PartialEq, Eq, Clone)]
 pub struct ParsedText { pub str: Rc<str> }
 
-impl Text<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposition, ParsedTuple, ParsedTag> for ParsedText {
+impl Text<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedCompound, ParsedTuple, ParsedTag> for ParsedText {
 
     fn as_str(&self) -> &str {
         &self.str
@@ -1383,7 +1378,7 @@ impl ParsedDictionary {
 
 }
 
-impl Dictionary<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposition, ParsedTuple, ParsedTag> for ParsedDictionary {
+impl Dictionary<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedCompound, ParsedTuple, ParsedTag> for ParsedDictionary {
 
     type EntryIterator<'b> = EntryIterator<'b>;
 
@@ -1438,7 +1433,7 @@ pub enum ParsedTuple {
     Multiple(Box<[ParsedValue]>),
 }
 
-impl Tuple<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposition, Self, ParsedTag> for ParsedTuple {
+impl Tuple<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedCompound, Self, ParsedTag> for ParsedTuple {
 
     type TupleIterator<'b> = TupleIterator<'b>;
 
@@ -1525,7 +1520,7 @@ impl ParsedTable {
 
 }
 
-impl Table<ParsedValue, ParsedText, ParsedDictionary, Self, ParsedComposition, ParsedTuple, ParsedTag> for ParsedTable {
+impl Table<ParsedValue, ParsedText, ParsedDictionary, Self, ParsedCompound, ParsedTuple, ParsedTag> for ParsedTable {
 
     type RowIterator<'b> = RowIterator<'b>;
 
@@ -1602,19 +1597,19 @@ impl <'a> Iterator for RowIterator<'a> {
 
 }
 
-//// Composition
+//// Compound
 
 #[derive(Clone)]
-pub struct ParsedComposition {
+pub struct ParsedCompound {
     components: Vec<ParsedValue>, // Todo reorganize
     whitespace: Vec<bool>,
 }
 
-impl ParsedComposition {
+impl ParsedCompound {
 
 }
 
-impl Composition<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, Self, ParsedTuple, ParsedTag> for ParsedComposition {
+impl Compound<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, Self, ParsedTuple, ParsedTag> for ParsedCompound {
 
     type ElementIterator<'b> = ElementIterator<'b>;
 
@@ -1669,9 +1664,9 @@ impl <'b> Iterator for ElementIterator<'b> {
 
 }
 
-//// Pattern
+//// Tag
 
-/// A parsed pattern.
+/// A parsed tag.
 #[derive(Clone)]
 pub struct ParsedTag {
     pub name: Rc<str>,
@@ -1679,7 +1674,7 @@ pub struct ParsedTag {
     pub value: Box<ParsedValue>,
 }
 
-impl Tag<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedComposition, ParsedTuple, Self> for ParsedTag {
+impl Tag<ParsedValue, ParsedText, ParsedDictionary, ParsedTable, ParsedCompound, ParsedTuple, Self> for ParsedTag {
 
     type AttributeIterator<'b> = AttributeIterator<'b>;
 

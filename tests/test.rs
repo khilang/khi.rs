@@ -1,6 +1,6 @@
 use std::ops::Deref;
 use khi::parse::{parse_dictionary_str, parse_expression_str, parse_table_str, ParsedValue};
-use khi::{Composition, Dictionary, Tag, Value, Table, Element};
+use khi::{Compound, Dictionary, Tag, Value, Table, Element};
 
 #[test]
 fn test_lexer() { // TODO
@@ -18,7 +18,7 @@ fn test_terms() {
     let source = "[e1; e2; e3]";
     let document = parse_expression_str(source).unwrap();
     assert!(document.is_table());
-    let source = "<Pattern>:arg:arg";
+    let source = "<Tag>:arg:arg";
     let document = parse_expression_str(source).unwrap();
     assert!(document.is_tag());
 }
@@ -47,7 +47,7 @@ fn test_text_terms() {
 }
 
 #[test]
-fn test_pattern_composition() {
+fn test_composition() {
     let source = "<p1>:arg1:arg2: <p3>:arg4:arg5: <p6>: <p7>:arg8";
     let document = parse_expression_str(source).unwrap();
     assert!(document.is_tag());
@@ -87,8 +87,8 @@ fn test_tuple() {
     assert_tuple("<> : a", 1);
     assert_tuple("<> : a : b", 2);
     assert_tuple(": d d\n: <e>:f", 2);
-    assert_pattern("<a> : b", 1);
-    assert_pattern("<a> : b b : c", 2);
+    assert_tag("<a> : b", 1);
+    assert_tag("<a> : b b : c", 2);
 
     assert_tuple("<>: <>: <>: <>", 1);
     assert_tuple("<>: <>: <>:{ <> }", 1);
@@ -101,11 +101,11 @@ fn assert_tuple(source: &str, len: usize) {
     assert_eq!(tuple.len(), len);
 }
 
-fn assert_pattern(source: &str, len: usize) {
+fn assert_tag(source: &str, len: usize) {
     let document = parse_expression_str(source).unwrap();
     assert!(document.is_tag());
-    let pattern = document.as_tag().unwrap();
-    assert_eq!(pattern.get().unfold().len(), len);
+    let tag = document.as_tag().unwrap();
+    assert_eq!(tag.get().unfold().len(), len);
 }
 
 fn assert_terms(source: &str, expect: &str) {
@@ -122,8 +122,8 @@ fn summarize_terms(value: &ParsedValue) -> String {
         ParsedValue::Dictionary(..) => summary = format!("{}Dc", summary),
         ParsedValue::Tuple(..) => summary = format!("{}Tp", summary),
         ParsedValue::Table(..) => summary = format!("{}Tb", summary),
-        ParsedValue::Composition(composition, ..) => {
-            for element in composition.iter() {
+        ParsedValue::Compound(compound, ..) => {
+            for element in compound.iter() {
                 match element {
                     Element::Solid(c) => {
                         match c {
@@ -132,7 +132,7 @@ fn summarize_terms(value: &ParsedValue) -> String {
                             ParsedValue::Dictionary(..) => summary = format!("{}Dc", summary),
                             ParsedValue::Tuple(..) => summary = format!("{}Tp", summary),
                             ParsedValue::Table(..) => summary = format!("{}Tb", summary),
-                            ParsedValue::Composition(..) => summary = format!("{}Cm", summary),
+                            ParsedValue::Compound(..) => summary = format!("{}Cm", summary),
                             ParsedValue::Tag(..) => summary = format!("{}Pt", summary),
                         }
                     }
