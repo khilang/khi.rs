@@ -23,6 +23,7 @@ pub enum Token {
     Bar(Position),
     Tilde(Position),
     Diamond(Position),
+    ColonOperator(Position),
     LeftBracket(Position),
     RightBracket(Position),
     LeftSquare(Position),
@@ -45,6 +46,7 @@ impl Token {
             Token::Bar(at) => *at,
             Token::Tilde(at) => *at,
             Token::Diamond(at) => *at,
+            Token::ColonOperator(at) => *at,
             Token::LeftBracket(at) => *at,
             Token::RightBracket(at) => *at,
             Token::LeftSquare(at) => *at,
@@ -200,6 +202,17 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
                     } else if d == '>' { // Diamond
                         iter.next_two();
                         tokens.push(Token::Diamond(iter.position()));
+                    } else if d == ':' {
+                        if let Some(e) = iter.e {
+                            if e == '>' { // Colon operator
+                                iter.next(); iter.next(); iter.next();
+                                tokens.push(Token::ColonOperator(iter.position()));
+                            } else {
+                                return Err(LexError::UnclosedColonOperator(iter.position()));
+                            }
+                        } else {
+                            return Err(LexError::UnclosedColonOperator(iter.position()));
+                        }
                     } else if d == '#' { // Text block
                         let text_block = lex_text_block(&mut iter)?;
                         tokens.push(text_block);
@@ -489,6 +502,7 @@ pub enum LexError {
     /// Text block was never closed.
     UnclosedTextBlock(Position),
     InvalidTextBlockConfiguration(Position),
+    UnclosedColonOperator(Position),
 }
 
 //// Strings

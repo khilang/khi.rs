@@ -48,7 +48,7 @@ fn test_text_terms() {
 
 #[test]
 fn test_composition() {
-    let source = "<p1>:arg1:arg2: <p3>:arg4:arg5: <p6>: <p7>:arg8";
+    let source = "<p1>:arg1:arg2 <:> <p3>:arg4:arg5 <:> <p6> <:> <p7>:arg8";
     let document = parse_expression_str(source).unwrap();
     assert!(document.is_tag());
     let p1 = document.as_tag().unwrap();
@@ -90,9 +90,9 @@ fn test_tuple() {
     assert_tag("<a> : b", 1);
     assert_tag("<a> : b b : c", 2);
 
-    assert_tuple("<>: <>: <>: <>", 1);
-    assert_tuple("<>: <>: <>:{ <> }", 1);
-    assert_tuple("<>: <>: <>:{ a :: b }", 1);
+    assert_tuple("<> <:> <> <:> <> <:> <>", 1);
+    assert_tuple("<> <:> <> <:> <> <:> { <> }", 1);
+    assert_tuple("<> <:> <> <:> <> <:> { a : b }", 1);
 }
 
 fn assert_tuple(source: &str, len: usize) {

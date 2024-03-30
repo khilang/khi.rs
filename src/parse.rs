@@ -63,6 +63,7 @@ fn tokenize(document: &str) -> Result<Vec<Token>> {
                 LexError::UnclosedTextBlock(at) => Err(ParseError::UnclosedTextBlock(at)),
                 LexError::InvalidTextBlockConfiguration(at) => Err(ParseError::InvalidTextBlockConfiguration(at)),
                 LexError::IllegalEscapeCharacter(at) => Err(ParseError::IllegalEscapeCharacter(at)),
+                LexError::UnclosedColonOperator(at) => Err(ParseError::UnclosedColonOperator(at)),
             };
         }
     };
@@ -491,7 +492,9 @@ fn parse_bullet_dictionary(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>)
 ///
 /// ```text
 /// <tuple> = "<>"
+///         | "<>" "<:>" <composable>
 ///         | "<>"<arguments>
+///         | "<>"<arguments> "<:>" <composable>
 /// ```
 fn parse_tuple(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedValue> {
     if !matches!(iter.t0, Token::Diamond(..)) {
@@ -499,11 +502,17 @@ fn parse_tuple(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<P
     }
     let from = iter.at();
     iter.next();
-    let arguments = if matches!(iter.t0, Token::Colon(..)) {
+    let mut arguments = if matches!(iter.t0, Token::Colon(..)) {
         parse_arguments(iter, strings)?
     } else {
         vec![]
     };
+    if matches!(iter.peek_next_glyph_token(), Token::ColonOperator(..)) {
+        iter.consume_next_glyph_token();
+        iter.skip_whitespace();
+        let composed = parse_composable(iter, strings)?;
+        arguments.push(composed);
+    }
     let to = iter.at();
     Ok(ParsedValue::from_tuple(arguments, from, to))
 }
@@ -842,16 +851,24 @@ fn parse_attributes(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Res
 ///
 /// ```text
 /// <tagged-value> = <tag>
+///                | <tag> "<:>" <composable>
 ///                | <tag><arguments>
+///                | <tag><arguments> "<:>" <composable>
 /// ```
 fn parse_tagged_value(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedValue> {
     let from = iter.at();
     let (name, attributes) = parse_tag(iter, strings)?;
-    let arguments = if matches!(iter.t0, Token::Colon(..)) {
+    let mut arguments = if matches!(iter.t0, Token::Colon(..)) {
         parse_arguments(iter, strings)?
     } else {
         vec![]
     };
+    if matches!(iter.peek_next_glyph_token(), Token::ColonOperator(..)) {
+        iter.consume_next_glyph_token();
+        iter.skip_whitespace();
+        let composed = parse_composable(iter, strings)?;
+        arguments.push(composed);
+    }
     let to = iter.at();
     let value = ParsedValue::from_tuple(arguments, from, to);
     Ok(ParsedValue::Tag(ParsedTag { name, attributes, value: Box::new(value) }, from, to))
@@ -878,8 +895,6 @@ fn parse_tagged_value(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> R
 ///             | ":""<>"<arguments>
 ///             | ":"<tag>
 ///             | ":"<tag><arguments>
-///             | ":"_<tuple>
-///             | ":"_<tagged-value>
 /// ```
 fn parse_arguments(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<Vec<ParsedValue>> {
     let mut arguments = vec![];
@@ -901,15 +916,15 @@ fn parse_arguments(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Resu
                 let value = parse_bracketed_structure(iter, strings)?;
                 arguments.push(value);
             }
+            Token::LeftSquare(..) => {
+                let table = parse_bracketed_table(iter, strings)?;
+                arguments.push(table);
+            }
             Token::Diamond(..) => {
                 let from = iter.at();
                 iter.next();
                 let to = iter.at();
                 arguments.push(ParsedValue::Tuple(ParsedTuple::Unit, from, to));
-            }
-            Token::LeftSquare(..) => {
-                let table = parse_bracketed_table(iter, strings)?;
-                arguments.push(table);
             }
             Token::LeftAngle(..) => {
                 let from = iter.at();
@@ -919,17 +934,7 @@ fn parse_arguments(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Resu
                 let tag = ParsedValue::Tag(ParsedTag { name, attributes, value: Box::new(ParsedValue::Nil(to, to)) }, from, to);
                 arguments.push(tag);
             }
-            Token::Whitespace(..) => {
-                iter.skip_whitespace();
-                let inner = match iter.t0 {
-                    Token::Diamond(..) => parse_tuple(iter, strings)?,
-                    Token::LeftAngle(..) => parse_tagged_value(iter, strings)?,
-                    _ => return iter.expectation_error(&[TokenType::Diamond, TokenType::LeftAngle]),
-                };
-                arguments.push(inner);
-                break;
-            }
-            _ => return iter.expectation_error(&[TokenType::Word, TokenType::Transcription, TokenType::TextBlock, TokenType::LeftBracket, TokenType::Diamond, TokenType::LeftSquare, TokenType::LeftAngle, TokenType::Whitespace]),
+            _ => return iter.expectation_error(&[TokenType::Word, TokenType::Transcription, TokenType::TextBlock, TokenType::LeftBracket, TokenType::Diamond, TokenType::LeftSquare, TokenType::LeftAngle]),
         }
         match iter.t0 {
             Token::Colon(..) => iter.next(),
@@ -937,6 +942,37 @@ fn parse_arguments(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Resu
         }
     }
     Ok(arguments)
+}
+
+/// Parse a composable.
+///
+/// Recognizes `<composable>`.
+///
+/// ```text
+/// <composable> = | <word>
+///                | <transcription>
+///                | <text-block>
+///                | <bracketed-expression>
+///                | <bracketed-dictionary>
+///                | <bracketed-table>
+///                | <tuple>
+///                | <tagged-value>
+/// ```
+fn parse_composable(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Result<ParsedValue> {
+    match iter.t0 {
+        Token::Word(.., text) | Token::Transcription(.., text) | Token::TextBlock(.., text) => {
+            let from = iter.at();
+            iter.next();
+            let to = iter.at();
+            let str = store_str(strings, text);
+            Ok(ParsedValue::Text(ParsedText { str }, from, to))
+        }
+        Token::LeftBracket(..) => parse_bracketed_structure(iter, strings),
+        Token::LeftSquare(..) => parse_bracketed_table(iter, strings),
+        Token::Diamond(..) => parse_tuple(iter, strings),
+        Token::LeftAngle(..) => parse_tagged_value(iter, strings),
+        _ => return iter.expectation_error(&[TokenType::Word, TokenType::Transcription, TokenType::TextBlock, TokenType::LeftBracket, TokenType::LeftSquare, TokenType::Diamond, TokenType::LeftAngle]),
+    }
 }
 
 /// Parse a bracketed expression or dictionary.
@@ -1110,6 +1146,7 @@ pub enum ParseError {
     UnclosedTextBlock(Position),
     InvalidTextBlockConfiguration(Position),
     IllegalEscapeCharacter(Position),
+    UnclosedColonOperator(Position),
 }
 
 impl Debug for ParseError {
@@ -1154,6 +1191,9 @@ pub fn error_to_string(error: &ParseError) -> String {
         }
         ParseError::IllegalEscapeCharacter(at) => {
             format!("Illegal escape character at {}:{}", at.line, at.column)
+        }
+        ParseError::UnclosedColonOperator(at) => {
+            format!("Unclosed colon operator at {}:{}", at.line, at.column)
         }
     }
 }
@@ -1757,7 +1797,7 @@ impl <'a> Iterator for AttributeIterator<'a> {
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub enum TokenType {
     Whitespace, Word, Transcription, TextBlock,
-    Colon, Semicolon, Bar, Tilde, Diamond,
+    Colon, Semicolon, Bar, Tilde, Diamond, ColonOperator,
     LeftBracket, RightBracket, LeftSquare, RightSquare, LeftAngle, RightAngle,
     End,
 }
@@ -1775,6 +1815,7 @@ impl Display for TokenType {
             TokenType::Bar => write!(f, "|"),
             TokenType::Tilde => write!(f, "~"),
             TokenType::Diamond => write!(f, "<>"),
+            TokenType::ColonOperator => write!(f, "<:>"),
             TokenType::LeftBracket => write!(f, "{{"),
             TokenType::RightBracket => write!(f, "}}"),
             TokenType::LeftSquare => write!(f, "["),
@@ -1800,6 +1841,7 @@ impl Token {
             Token::Bar(..) => TokenType::Bar,
             Token::Tilde(..) => TokenType::Tilde,
             Token::Diamond(..) => TokenType::Diamond,
+            Token::ColonOperator(..) => TokenType::ColonOperator,
             Token::LeftBracket(..) => TokenType::LeftBracket,
             Token::RightBracket(..) => TokenType::RightBracket,
             Token::LeftSquare(..) => TokenType::LeftSquare,
