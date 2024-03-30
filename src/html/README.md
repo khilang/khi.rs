@@ -29,12 +29,11 @@ produces `<a>X</a><b>Y</b><c>Z</c>`.
     <h1 id:main-heading>:{Hello world!}
     <p>:{Hello world!}
     <img src:frontpage.jpg>
-    <div class:dark-background>: <p>:{
-      This is a paragraph <br>
-      with a line break.
+    <div class:dark-background> <:> <p>:{
+      This is a paragraph <br> with a line break.
       <em class:italic>:{This text is italic.}
     }
-    <pre>: <code>: <raw!>:<#>
+    <pre> <:> <code> <:> <raw!>:<#>
       def fib(n):
           if n == 0:
               return 0
