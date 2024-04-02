@@ -112,6 +112,7 @@ impl Writer<'_> {
             BreakMode::Margin(margin) => {
                 if margin < self.column {
                     if !matches!(self.last_type, LastType::Newline) {
+                        self.contract_opportunity();
                         self.output.push('\n');
                         self.line += 1;
                         self.last_type = LastType::Newline;
@@ -124,6 +125,7 @@ impl Writer<'_> {
                     if matches!(self.last_type, LastType::Newline) {
                         self.output.push_str("%\n");
                     } else {
+                        self.contract_opportunity();
                         self.output.push('\n');
                     }
                     self.line += 1;
