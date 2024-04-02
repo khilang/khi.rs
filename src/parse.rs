@@ -931,7 +931,7 @@ fn parse_arguments(iter: &mut TokenIter, strings: &mut HashSet<Rc<str>>) -> Resu
                 let (name, attributes) = parse_tag(iter, strings)?;
                 let name = store_str(strings, &name);
                 let to = iter.at();
-                let tag = ParsedValue::Tag(ParsedTag { name, attributes, value: Box::new(ParsedValue::Nil(to, to)) }, from, to);
+                let tag = ParsedValue::Tag(ParsedTag { name, attributes, value: Box::new(ParsedValue::Tuple(ParsedTuple::Unit, to, to)) }, from, to);
                 arguments.push(tag);
             }
             _ => return iter.expectation_error(&[TokenType::Word, TokenType::Transcription, TokenType::TextBlock, TokenType::LeftBracket, TokenType::Diamond, TokenType::LeftSquare, TokenType::LeftAngle]),

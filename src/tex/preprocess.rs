@@ -59,10 +59,12 @@ impl Writer<'_> {
                 self.column += 1;
             }
         } else if char == '^' {
+            self.contract_opportunity();
             self.output.push('^');
             self.last_type = LastType::Caret;
             self.column += 1;
         } else if char == '_' {
+            self.contract_opportunity();
             self.output.push('_');
             self.last_type = LastType::Underscore;
             self.column += 1;
@@ -71,6 +73,12 @@ impl Writer<'_> {
             self.last_type = LastType::Glyph;
             self.column += 1;
         };
+    }
+
+    fn contract_opportunity(&mut self) {
+        while self.output.ends_with(' ') {
+            self.output.pop();
+        }
     }
 
     fn normalize_and_push_str(&mut self, str: &str) {
@@ -152,9 +160,7 @@ impl Writer<'_> {
             }
             ParsedValue::Text(text, at, _) => {
                 self.break_opportunity(*at);
-                self.push('{');
                 self.normalize_and_push_str(text.as_str());
-                self.push('}');
             }
             ParsedValue::Dictionary(_, at, _) => {
                 return Err(PreprocessorError::IllegalDictionary(*at));
@@ -363,9 +369,7 @@ impl Writer<'_> {
                     }
                     ParsedValue::Tag(tag, at, to) => {
                         self.break_opportunity(*at);
-                        self.push('{');
                         self.write_macro(tag, *at)?;
-                        self.push('}');
                     }
                 }
             }
