@@ -235,6 +235,7 @@ pub fn translate_escape_character(char: char) -> Result<char, ()> {
         ':' => Ok(':'),
         ';' => Ok(';'),
         '|' => Ok('|'),
+        '&' => Ok('&'),
         '~' => Ok('~'),
         '`' => Ok('`'),
         '\\' => Ok('\\'),

@@ -1,5 +1,5 @@
 use std::ops::Deref;
-use crate::{Dictionary, Tag, Value, Text, Element, Entry, Attribute, Compound};
+use crate::{Dictionary, Tag, Value, Text, Element, Entry, Attribute, Compound, Tuple};
 use crate::lex::Position;
 use crate::parse::{ParsedDictionary, ParsedTag, ParsedValue};
 
@@ -92,7 +92,11 @@ impl XmlWriter<'_> {
                 }
             }
             ParsedValue::Tuple(tuple, from, to) => {
-                return Err(PreprocessorError::IllegalTuple(*from));
+                if tuple.len() == 0 {
+                    // Empty string
+                } else {
+                    return Err(PreprocessorError::IllegalTuple(*from));
+                }
             }
             ParsedValue::Tag(tag, from, to) => {
                 self.write_tag(tag, *from)?;

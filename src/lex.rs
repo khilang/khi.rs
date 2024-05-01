@@ -21,6 +21,7 @@ pub enum Token {
     Colon(Position),
     Semicolon(Position),
     Bar(Position),
+    Ampersand(Position),
     Tilde(Position),
     Diamond(Position),
     ColonOperator(Position),
@@ -44,6 +45,7 @@ impl Token {
             Token::Colon(at) => *at,
             Token::Semicolon(at) => *at,
             Token::Bar(at) => *at,
+            Token::Ampersand(at) => *at,
             Token::Tilde(at) => *at,
             Token::Diamond(at) => *at,
             Token::ColonOperator(at) => *at,
@@ -167,6 +169,14 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
                 } else { // Bar
                     iter.next();
                     tokens.push(Token::Bar(iter.position()));
+                }
+            } else if c == '&' {
+                if let Some('&') = iter.d { // Ampersand glyph
+                    let word = lex_word(&mut iter)?;
+                    tokens.push(word);
+                } else { // Ampersand
+                    iter.next();
+                    tokens.push(Token::Ampersand(iter.position()));
                 }
             } else if c == '~' {
                 if let Some('~') = iter.d { // Tilde glyph
@@ -299,7 +309,7 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
                 break;
             } else if c == '\\' || c == '{' || c == '}' || c == '[' || c == ']' { // Reserved
                 break;
-            } else if c == ':' || c == ';' || c == '|' || c == '~' || c == '<' || c == '>' {
+            } else if c == ':' || c == ';' || c == '|' || c == '&' || c == '~' || c == '<' || c == '>' {
                 if let Some(d) = iter.d {
                     if d == c { // Repeated escape sequence
                         iter.next(); iter.next();
@@ -327,7 +337,7 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
                         break;
                     } else if d == '\\' || d == '{' || d == '}' || d == '[' || d == ']' { // Following reserved character
                         return Err(LexError::InvalidHashSequence(iter.position()));
-                    } else if d == ':' || d == ';' || d == '|' || d == '~' || d == '<' || d == '>' {
+                    } else if d == ':' || d == ';' || d == '|' || d == '&' || d == '~' || d == '<' || d == '>' {
                         if iter.e == Some(d) { // Following repeated escape sequence
                             iter.next();
                             string.push('#');

@@ -9,7 +9,7 @@
 use std::fmt::Write;
 use crate::lex::Position;
 use crate::parse::{ParsedValue, ParsedTag, ParsedTable};
-use crate::{Tag, Table, Text, Element, Compound, Value};
+use crate::{Tag, Table, Text, Element, Compound, Value, Tuple};
 
 pub fn write_tex(structure: &ParsedValue) -> Result<String, PreprocessorError> {
     let mut output = String::new();
@@ -222,8 +222,14 @@ impl Writer<'_> {
                     }
                 };
             }
-            ParsedValue::Tuple(_, at, _) => {
-                return Err(PreprocessorError::IllegalTuple(*at));
+            ParsedValue::Tuple(tuple, at, _) => {
+                if tuple.len() == 0 {
+                    self.break_opportunity(*at);
+                    self.push('{');
+                    self.push('}');
+                } else {
+                    return Err(PreprocessorError::IllegalTuple(*at));
+                }
             }
             ParsedValue::Tag(tag, at, _) => {
                 self.break_opportunity(*at);
