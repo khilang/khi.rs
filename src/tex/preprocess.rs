@@ -377,7 +377,13 @@ impl Writer<'_> {
                     }
                     ParsedValue::Tag(tag, at, to) => {
                         self.break_opportunity(*at);
-                        self.write_macro(tag, *at)?;
+                        if tag.value.unfold().is_empty() {
+                            self.write_macro(tag, *at)?;
+                        } else {
+                            self.push('{');
+                            self.write_macro(tag, *at)?;
+                            self.push('}');
+                        }
                     }
                 }
             }
