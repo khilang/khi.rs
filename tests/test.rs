@@ -42,13 +42,13 @@ fn test_text_terms() {
     assert_text("Hello\tworld!", "Hello world!");
     assert_text("Hello\nworld!", "Hello world!");
     assert_text("R e d", "R e d");
-    assert_text("R & e & d", "Red");
+    assert_text("R ~ e ~ d", "Red");
     assert_text("A<#>A  A<#>. A\\A  A\\.", "AA  A. AA  A.");
 }
 
 #[test]
 fn test_composition() {
-    let source = "<p1>:arg1:arg2 <:> <p3>:arg4:arg5 <:> <p6> <:> <p7>:arg8";
+    let source = "<p1>:arg1:arg2:&:<p3>:arg4:arg5:&:<p6>:&:<p7>:arg8";
     let document = parse_expression_str(source).unwrap();
     assert!(document.is_tag());
     let p1 = document.as_tag().unwrap();
@@ -72,27 +72,27 @@ fn test_expression() {
     assert_terms("{k: v}", "Dc");
     assert_terms("[1|0;0|1]", "Tb");
     assert_terms("<P>", "Pt");
-    assert_terms("{&} {Text [Table]}", "Nl Cm");
+    assert_terms("{~} {Text [Table]}", "Nl Cm");
     assert_terms("{Text [Table]}", "Tx Tb");
-    assert_terms("{&}", "");
+    assert_terms("{~}", "");
     assert_terms("Text {Text} [Table] {k: v} <Dir>", "Tx Tx Tb Dc Pt");
     assert_terms("Text \"Text\" [Table] {k: v} <Dir>", "Tx Tb Dc Pt");
 }
 
 #[test]
 fn test_tuple() {
-    assert_tuple("a a ~ b b", 2);
-    assert_tuple("a ~ [b] ~ {c}", 3);
-    assert_tuple("<a>:b:c ~ d d ~ <e>:f", 3);
-    assert_tuple("<> ~ a", 1);
-    assert_tuple("<> ~ a ~ b", 2);
-    assert_tuple("~ d d\n~ <e>:f", 2);
-    assert_tag("<a> ~ b", 1);
-    assert_tag("<a> ~ b b ~ c", 2);
+    assert_tuple("a a & b b", 2);
+    assert_tuple("a & [b] & {c}", 3);
+    assert_tuple("<a>:b:c & d d & <e>:f", 3);
+    assert_tuple("<>: a", 1);
+    assert_tuple("<>: a & b", 1);
+    assert_tuple("& d d\n& <e>:f", 2);
+    assert_tag("<a>: b", 1);
+    assert_tag("<a>: b b & c", 2);
 
-    assert_tuple("<> <:> <> <:> <> <:> <>", 1);
-    assert_tuple("<> <:> <> <:> <> <:> { <> }", 1);
-    assert_tuple("<> <:> <> <:> <> <:> { a ~ b }", 1);
+    assert_tuple("<>: <>: <>: <>", 1);
+    assert_tuple("<>: <>: <>: { <> }", 1);
+    assert_tuple("<>: <>: <>: { a & b }", 1);
 }
 
 fn assert_tuple(source: &str, len: usize) {
@@ -349,16 +349,16 @@ fn assert_text(source: &str, expect: &str) {
 }
 
 #[test]
-fn test_ampersand_operator() {
-    assert_terms("&", "");
-    assert_terms("& &", "");
-    assert_terms("A &", "Tx");
-    assert_terms("A & B", "Tx");
-    assert_terms("A & B & C", "Tx");
-    assert_terms("{A} & {B}", "TxTx");
-    assert_terms("{A} & {B} & {C}", "TxTxTx");
-    assert_terms("{A}&{B}&{C}", "TxTxTx");
-    assert_terms("&{A} {B}& &{C}&", "Tx TxTx");
+fn test_tilde_operator() {
+    assert_terms("~", "");
+    assert_terms("~ ~", "");
+    assert_terms("A ~", "Tx");
+    assert_terms("A ~ B", "Tx");
+    assert_terms("A ~ B ~ C", "Tx");
+    assert_terms("{A} ~ {B}", "TxTx");
+    assert_terms("{A} ~ {B} ~ {C}", "TxTxTx");
+    assert_terms("{A}~{B}~{C}", "TxTxTx");
+    assert_terms("~{A} {B}~ ~{C}~", "Tx TxTx");
 }
 
 #[test]
