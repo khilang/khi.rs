@@ -4,19 +4,20 @@
 
 ## Macro
 
-| Macro    | Example                               | Function                                                         |
-|----------|---------------------------------------|------------------------------------------------------------------|
-| `<$>`    | `<$>:x`                               | Inline math                                                      |
-| `<n>`    | `<n>`                                 | Insert newline command (`\\`)                                    |
-| `<p>`    | `<p>`                                 | Insert paragraph separator (two newlines or equivalently `\par`) |
-| `<def!>` | `<def!>:<Log>:1:{<operatorname>:Log}` | Define a LaTeX command                                           |
-| `<raw!>` | `<raw!>:"text"`                       | Insert exact string (no escaping)                                |
+| Macro      | Example                                    | Function                                                         |
+|------------|--------------------------------------------|------------------------------------------------------------------|
+| `<$>`      | `<$>:x`                                    | Inline math                                                      |
+| `<n>`      | `<n>`                                      | Insert newline command (`\\`)                                    |
+| `<p>`      | `<p>`                                      | Insert paragraph separator (two newlines or equivalently `\par`) |
+| `<def!>`   | `<def!>:<Log>:1:{ <operatorname>:Log #1 }` | Define a LaTeX command                                           |
+| `<raw!>`   | `<raw!>:<#> ... <#>`                       | Insert exact string (no escaping)                                |
+| `<lines!>` | `<lines!>:<#> ... <#>`                     | Insert text lines (no escaping). Use to embed code, files etc.   |
 
 ## Optional argument
 
-An optional argument is an argument enclosed in a pair of square brackets `[`, `]`.
-To indicate an optional argument, end the command with an apostrophe. For example,
-`<sqrt'>:3:27` produces `\sqrt[3]{27}`.
+In LaTeX, an optional argument is an argument enclosed in a pair of square brackets
+`[`, `]`. To indicate an optional argument in KhiTeX, end the command with an apostrophe.
+For example, `<sqrt'>:3:27` produces `\sqrt[3]{27}`.
 
 ## Tabulation
 

@@ -149,6 +149,15 @@ impl Writer<'_> {
         }
     }
 
+    fn write_raw(&mut self, raw: &str) {
+        for c in raw.chars() {
+            self.output.push(c);
+            if c == '\n' {
+                self.line += 1;
+            }
+        }
+    }
+
 }
 
 impl Writer<'_> {
@@ -279,12 +288,20 @@ impl Writer<'_> {
                 self.write_inner(substitute)?;
                 self.output.push('}');
                 self.last_type = LastType::Glyph;
+            } else if name.eq("lines!") {
+                if arguments.len() != 1 {
+                    return Err(PreprocessorError::MacroError(at, format!("lines! takes 1 text argument.")));
+                }
+                let text = arguments.get(0).unwrap().as_text().unwrap();
+                self.output.write_char('\n').or(Err(PreprocessorError::MacroError(at, format!("Error on writing to output in macro at {}:{}.", at.line, at.column))))?;
+                self.line += 1;
+                self.write_raw(text.as_str());
             } else if name.eq("raw!") {
                 if arguments.len() != 1 {
                     return Err(PreprocessorError::MacroError(at, format!("raw! must take 1 text argument.")));
                 }
                 let text = arguments.get(0).unwrap().as_text().unwrap();
-                self.output.write_str(text.as_str()).or(Err(PreprocessorError::MacroError(at, format!("Error on writing to output in macro at {}:{}.", at.line, at.column))))?;
+                self.write_raw(text.as_str());
             } else {
                 return Err(PreprocessorError::MacroError(at, format!("Unknown macro {}.", name)));
             }
@@ -373,7 +390,7 @@ impl Writer<'_> {
                         self.push('}');
                     }
                     ParsedValue::Tuple(_, at, _) => {
-                        return Err(PreprocessorError::IllegalTable(*at));
+                        return Err(PreprocessorError::IllegalTuple(*at));
                     }
                     ParsedValue::Tag(tag, at, to) => {
                         self.break_opportunity(*at);

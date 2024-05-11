@@ -43,7 +43,7 @@ fn preprocess() -> Result<String, String> {
             },
             Err(error) => match error {
                 PreprocessorError::IllegalTable(at) => {
-                    Err(format!("Illegal sequence at {}:{}.", at.line, at.column))
+                    Err(format!("Illegal table at {}:{}.", at.line, at.column))
                 }
                 PreprocessorError::IllegalDictionary(at) => {
                     Err(format!("Illegal dictionary at {}:{}.", at.line, at.column))
@@ -52,7 +52,7 @@ fn preprocess() -> Result<String, String> {
                     Err(format!("Table cannot be empty at {}:{}.", at.line, at.column))
                 }
                 PreprocessorError::MacroError(at, directive) => {
-                    Err(format!("Unknown command {} at {}:{}.", &directive, at.line, at.column))
+                    Err(format!("Unknown macro {} at {}:{}.", &directive, at.line, at.column))
                 }
                 PreprocessorError::MissingOptionalArgument(at) => {
                     Err(format!("Missing optional argument at {}:{}.", at.line, at.column))
