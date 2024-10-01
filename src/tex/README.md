@@ -4,14 +4,14 @@
 
 ## Macro
 
-| Macro      | Example                                    | Function                                                         |
-|------------|--------------------------------------------|------------------------------------------------------------------|
-| `<$>`      | `<$>:x`                                    | Inline math                                                      |
-| `<n>`      | `<n>`                                      | Insert newline command (`\\`)                                    |
-| `<p>`      | `<p>`                                      | Insert paragraph separator (two newlines or equivalently `\par`) |
-| `<def!>`   | `<def!>:<Log>:1:{ <operatorname>:Log #1 }` | Define a LaTeX command                                           |
-| `<raw!>`   | `<raw!>:<#> ... <#>`                       | Insert exact string (no escaping)                                |
-| `<lines!>` | `<lines!>:<#> ... <#>`                     | Insert text lines (no escaping). Use to embed code, files etc.   |
+| Macro      | Example                                  | Function                                                         |
+|------------|------------------------------------------|------------------------------------------------------------------|
+| `<$>`      | `<$>:x`                                  | Inline math                                                      |
+| `<n>`      | `<n>`                                    | Insert newline command (`\\`)                                    |
+| `<p>`      | `<p>`                                    | Insert paragraph separator (two newlines or equivalently `\par`) |
+| `<def!>`   | `<def!>:Log:1:{ <operatorname>:Log #1 }` | Define a LaTeX command                                           |
+| `<raw!>`   | `<raw!>:<#> ... <#>`                     | Insert exact string (no escaping)                                |
+| `<lines!>` | `<lines!>:<#> ... <#>`                   | Insert text lines (no escaping). Use to embed code, files etc.   |
 
 ## Optional argument
 

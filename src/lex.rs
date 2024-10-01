@@ -1,14 +1,8 @@
+//! Khi lexer reference implementation.
+
 use std::ops::Deref;
+use crate::pdm::Position;
 use crate::translate_escape_character;
-
-//// Position
-
-/// A char position.
-///
-/// Contains a line number and a column number, corresponding to a character in a
-/// document.
-#[derive(PartialEq, Eq, Copy, Clone)]
-pub struct Position { pub index: usize, pub line: usize, pub column: usize }
 
 //// Token
 
@@ -21,9 +15,7 @@ pub enum Token {
     Colon(Position),
     Semicolon(Position),
     Bar(Position),
-    Ampersand(Position),
     Tilde(Position),
-    Diamond(Position),
     LeftBracket(Position),
     RightBracket(Position),
     LeftSquare(Position),
@@ -35,7 +27,7 @@ pub enum Token {
 
 impl Token {
 
-    pub fn position(&self) -> Position {
+    pub fn at(&self) -> Position {
         match self {
             Token::Whitespace(at) => *at,
             Token::Word(at, ..) => *at,
@@ -44,9 +36,7 @@ impl Token {
             Token::Colon(at) => *at,
             Token::Semicolon(at) => *at,
             Token::Bar(at) => *at,
-            Token::Ampersand(at) => *at,
             Token::Tilde(at) => *at,
-            Token::Diamond(at) => *at,
             Token::LeftBracket(at) => *at,
             Token::RightBracket(at) => *at,
             Token::LeftSquare(at) => *at,
@@ -168,14 +158,6 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
                     iter.next();
                     tokens.push(Token::Bar(iter.position()));
                 }
-            } else if c == '&' {
-                if let Some('&') = iter.d { // Ampersand glyph
-                    let word = lex_word(&mut iter)?;
-                    tokens.push(word);
-                } else { // Ampersand
-                    iter.next();
-                    tokens.push(Token::Ampersand(iter.position()));
-                }
             } else if c == '~' {
                 if let Some('~') = iter.d { // Tilde glyph
                     let word = lex_word(&mut iter)?;
@@ -207,9 +189,6 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
                     if d == '<' { // Left angle glyph
                         let token = lex_word(&mut iter)?;
                         tokens.push(token);
-                    } else if d == '>' { // Diamond
-                        iter.next_two();
-                        tokens.push(Token::Diamond(iter.position()));
                     } else if d == '#' { // Text block
                         let text_block = lex_text_block(&mut iter)?;
                         tokens.push(text_block);
@@ -296,7 +275,7 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
                 break;
             } else if c == '\\' || c == '{' || c == '}' || c == '[' || c == ']' { // Reserved
                 break;
-            } else if c == ':' || c == ';' || c == '|' || c == '&' || c == '~' || c == '<' || c == '>' {
+            } else if c == ':' || c == ';' || c == '|' || c == '~' || c == '<' || c == '>' {
                 if let Some(d) = iter.d {
                     if d == c { // Repeated escape sequence
                         iter.next(); iter.next();
@@ -316,7 +295,7 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
                     iter.next_two();
                     string.push(x);
                 } else {
-                    return Err(LexError::EscapeEOS);
+                    return Err(LexError::EscapeEos);
                 }
             } else if c == '#' {
                 if let Some(d) = iter.d {
@@ -324,7 +303,7 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
                         break;
                     } else if d == '\\' || d == '{' || d == '}' || d == '[' || d == ']' { // Following reserved character
                         return Err(LexError::InvalidHashSequence(iter.position()));
-                    } else if d == ':' || d == ';' || d == '|' || d == '&' || d == '~' || d == '<' || d == '>' {
+                    } else if d == ':' || d == ';' || d == '|' || d == '~' || d == '<' || d == '>' {
                         if iter.e == Some(d) { // Following repeated escape sequence
                             iter.next();
                             string.push('#');
@@ -370,7 +349,7 @@ fn lex_transcription<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Resu
                     iter.next_two();
                     string.push(e);
                 } else {
-                    return Err(LexError::EscapeEOS);
+                    return Err(LexError::EscapeEos);
                 };
             } else {
                 iter.next();
@@ -490,16 +469,15 @@ fn skip_whitespace_in_text_block_tag<It: Iterator<Item = char>>(iter: &mut CharI
 
 pub enum LexError {
     /// Tried to escape EOS.
-    EscapeEOS,
+    EscapeEos,
     /// Character escape sequence is not recognized.
     InvalidEscapeSequence(Position),
     /// Illegal character after hash.
     InvalidHashSequence(Position),
-    IllegalEscapeCharacter(Position),
     /// Text block was never closed.
     UnclosedTextBlock(Position),
+    /// Invalid text block configuration.
     InvalidTextBlockConfiguration(Position),
-    UnclosedColonOperator(Position),
 }
 
 //// Strings

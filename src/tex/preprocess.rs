@@ -7,9 +7,8 @@
 // '\' must be inserted as "\textbackslash" in text and "\backslash" or "\setminus" in math. "\\" indicates a line break.
 
 use std::fmt::Write;
-use crate::lex::Position;
-use crate::parse::{ParsedValue, ParsedTag, ParsedTable};
-use crate::{Tag, Table, Text, Element, Compound, Value, Tuple};
+use crate::pdm::{ParsedList, ParsedTaggedValue, ParsedValue, Position};
+use crate::{Compound, Element, List, Tagged, Text, Tuple, Value};
 
 pub fn write_tex(structure: &ParsedValue) -> Result<String, PreprocessorError> {
     let mut output = String::new();
@@ -176,7 +175,7 @@ impl Writer<'_> {
             ParsedValue::Dictionary(_, at, _) => {
                 return Err(PreprocessorError::IllegalDictionary(*at));
             }
-            ParsedValue::Table(table, at, _) => {
+            ParsedValue::List(table, at, _) => {
                 self.break_opportunity(*at);
                 self.write_tabulation(table, *at)?;
             }
@@ -184,7 +183,7 @@ impl Writer<'_> {
                 self.break_opportunity(*at);
                 for element in compound.iter() {
                     match element {
-                        Element::Solid(solid) => {
+                        Element::Element(solid) => {
                             match solid {
                                 ParsedValue::Nil(at, _) => {
                                     self.break_opportunity(*at);
@@ -205,7 +204,7 @@ impl Writer<'_> {
                                 ParsedValue::Dictionary(_, at, _) => {
                                     return Err(PreprocessorError::IllegalDictionary(*at));
                                 }
-                                ParsedValue::Table(table, at, _) => {
+                                ParsedValue::List(table, at, _) => {
                                     self.break_opportunity(*at);
                                     self.write_tabulation(&table, *at)?;
                                 }
@@ -218,13 +217,13 @@ impl Writer<'_> {
                                 ParsedValue::Tuple(_, at, _) => {
                                     return Err(PreprocessorError::IllegalTuple(*at));
                                 }
-                                ParsedValue::Tag(tag, at, _) => {
+                                ParsedValue::Tagged(tag, at, _) => {
                                     self.break_opportunity(*at);
                                     self.write_macro(tag, *at)?;
                                 }
                             }
                         }
-                        Element::Space => {
+                        Element::Whitespace => {
                             self.break_opportunity(*at);
                             self.push(' ');
                         }
@@ -240,7 +239,7 @@ impl Writer<'_> {
                     return Err(PreprocessorError::IllegalTuple(*at));
                 }
             }
-            ParsedValue::Tag(tag, at, _) => {
+            ParsedValue::Tagged(tag, at, _) => {
                 self.break_opportunity(*at);
                 self.write_macro(tag, *at)?;
             }
@@ -248,18 +247,15 @@ impl Writer<'_> {
         Ok(())
     }
 
-    fn write_tabulation(&mut self, table: &ParsedTable, at: Position) -> Result<(), PreprocessorError> {
-        if table.columns == 0 {
-            return Err(PreprocessorError::ZeroTable(at))
-        };
-        for row in table.iter_rows() {
-            let mut columns = row.iter();
+    fn write_tabulation(&mut self, list: &ParsedList, at: Position) -> Result<(), PreprocessorError> {
+        for element in list.iter() {
+            let mut columns = element.iter_as_tuple();
             if let Some(c) = columns.next() {
-                self.write_inner(c)?;
+                self.write_inner(&c)?;
             };
             while let Some(c) = columns.next() {
                 self.push('&');
-                self.write_inner(c)?;
+                self.write_inner(&c)?;
             };
             self.push('\\');
             self.push('\\');
@@ -267,20 +263,24 @@ impl Writer<'_> {
         Ok(())
     }
 
-    fn write_macro(&mut self, tag: &ParsedTag, at: Position) -> Result<(), PreprocessorError> {
+    fn write_macro(&mut self, tag: &ParsedTaggedValue, at: Position) -> Result<(), PreprocessorError> {
         let mut name = tag.name();
-        let arguments = tag.get().unfold();
+        let inner_value = tag.get();
         if name.ends_with("!") {
             if name.eq("def!") {
-                if arguments.len() != 3 {
+                if !inner_value.is_tuple() {
                     return Err(PreprocessorError::MacroError(at, format!("def! must take 3 arguments.")));
                 }
-                let tag = arguments.get(0).unwrap().as_tag().unwrap();
-                let arity = arguments.get(1).unwrap();
-                let substitute = arguments.get(2).unwrap();
+                let inner_value = inner_value.as_tuple().unwrap();
+                if inner_value.len() != 3 {
+                    return Err(PreprocessorError::MacroError(at, format!("def! must take 3 arguments.")));
+                }
+                let tag = inner_value.get(0).unwrap().as_text().unwrap();
+                let arity = inner_value.get(1).unwrap();
+                let substitute = inner_value.get(2).unwrap();
                 self.output.push_str("\\newcommand");
                 self.output.push('\\');
-                self.output.push_str(tag.name());
+                self.output.push_str(tag.as_str());
                 self.output.push('[');
                 self.write_inner(arity)?;
                 self.output.push(']');
@@ -289,34 +289,35 @@ impl Writer<'_> {
                 self.output.push('}');
                 self.last_type = LastType::Glyph;
             } else if name.eq("lines!") {
-                if arguments.len() != 1 {
+                if inner_value.is_tuple() {
                     return Err(PreprocessorError::MacroError(at, format!("lines! takes 1 text argument.")));
                 }
-                let text = arguments.get(0).unwrap().as_text().unwrap();
+                let text = inner_value.as_text().unwrap();
                 self.output.write_char('\n').or(Err(PreprocessorError::MacroError(at, format!("Error on writing to output in macro at {}:{}.", at.line, at.column))))?;
                 self.line += 1;
                 self.write_raw(text.as_str());
             } else if name.eq("raw!") {
-                if arguments.len() != 1 {
+                if !inner_value.is_tuple() {
                     return Err(PreprocessorError::MacroError(at, format!("raw! must take 1 text argument.")));
                 }
-                let text = arguments.get(0).unwrap().as_text().unwrap();
+                let text = inner_value.as_text().unwrap();
                 self.write_raw(text.as_str());
             } else {
                 return Err(PreprocessorError::MacroError(at, format!("Unknown macro {}.", name)));
             }
         } else if name.eq("$") {
             self.push('$');
-            let structure = arguments.get(0).unwrap();
+            let structure = inner_value;
             self.write_inner(structure)?;
             self.push('$');
         } else if name.eq("p") {
-            self.normalize_and_push_str("{\\par}");
+            self.normalize_and_push_str("\\par");
+            self.last_type = LastType::Command;
         } else if name.eq("n") {
             self.normalize_and_push_str("\\\\");
         }  else {
             // Regular command.
-            let mut iter = arguments.iter();
+            let mut iter = inner_value.iter_as_tuple();
             if name.ends_with("'") {
                 name = &name[0..name.len() - 1];
                 self.push('\\');
@@ -336,22 +337,22 @@ impl Writer<'_> {
                         ParsedValue::Dictionary(dictionary, at, to) => {
                             return Err(PreprocessorError::IllegalDictionary(*at));
                         }
-                        ParsedValue::Table(table, at, to) => {
+                        ParsedValue::List(table, at, to) => {
                             return Err(PreprocessorError::IllegalTable(*at));
                         }
                         ParsedValue::Compound(compound, at, to) => {
                             self.break_opportunity(*at);
                             self.push('[');
-                            self.write_inner(argument)?;
+                            self.write_inner(&argument)?;
                             self.push(']');
                         }
                         ParsedValue::Tuple(_, at, _) => {
                             return Err(PreprocessorError::IllegalTuple(*at));
                         }
-                        ParsedValue::Tag(tag, at, to) => {
+                        ParsedValue::Tagged(tag, at, to) => {
                             self.break_opportunity(*at);
                             self.push('[');
-                            self.write_macro(tag, *at)?;
+                            self.write_macro(&tag, *at)?;
                             self.push(']');
                         }
                     }
@@ -362,7 +363,7 @@ impl Writer<'_> {
                 self.push('\\');
                 self.normalize_and_push_str(name);
             }
-            if arguments.is_empty() { // No arguments - if followed by whitespace, insert empty {} after due to LaTeX scanner consuming following whitespace.
+            if inner_value.is_unit() { // No arguments - if followed by whitespace, insert empty {} after due to LaTeX scanner consuming following whitespace.
                 self.last_type = LastType::Command;
             }
             while let Some(argument) = iter.next() {
@@ -380,25 +381,25 @@ impl Writer<'_> {
                     ParsedValue::Dictionary(dictionary, at, to) => {
                         return Err(PreprocessorError::IllegalDictionary(*at));
                     }
-                    ParsedValue::Table(table, at, to) => {
+                    ParsedValue::List(table, at, to) => {
                         return Err(PreprocessorError::IllegalTable(*at));
                     }
                     ParsedValue::Compound(compound, at, to) => {
                         self.break_opportunity(*at);
                         self.push('{');
-                        self.write_inner(argument)?;
+                        self.write_inner(&argument)?;
                         self.push('}');
                     }
                     ParsedValue::Tuple(_, at, _) => {
                         return Err(PreprocessorError::IllegalTuple(*at));
                     }
-                    ParsedValue::Tag(tag, at, to) => {
+                    ParsedValue::Tagged(t, at, to) => {
                         self.break_opportunity(*at);
-                        if tag.value.unfold().is_empty() {
-                            self.write_macro(tag, *at)?;
+                        if t.get().is_unit() {
+                            self.write_macro(&t, *at)?;
                         } else {
                             self.push('{');
-                            self.write_macro(tag, *at)?;
+                            self.write_macro(&t, *at)?;
                             self.push('}');
                         }
                     }

@@ -1,7 +1,6 @@
 use std::ops::Deref;
-use crate::{Dictionary, Tag, Value, Text, Element, Entry, Attribute, Compound, Tuple};
-use crate::lex::Position;
-use crate::parse::{ParsedDictionary, ParsedTag, ParsedValue};
+use crate::{Dictionary, Tagged, Value, Text, Element, Attribute, Compound, Tuple};
+use crate::pdm::{ParsedDictionary, ParsedTaggedValue, ParsedTuple, ParsedValue, Position};
 
 pub fn write_html(value: &ParsedValue) -> Result<String, PreprocessorError> {
     let mut output = String::new();
@@ -79,12 +78,12 @@ impl XmlWriter<'_> {
             ParsedValue::Dictionary(dictionary, from, to) => {
                 self.write_dictionary(dictionary, *from)?;
             }
-            ParsedValue::Table(table, from, to) => {
+            ParsedValue::List(table, from, to) => {
                 return Err(PreprocessorError::IllegalTable(*from));
             }
             ParsedValue::Compound(compound, from, to) => {
                 for element in compound.iter() {
-                    if let Element::Solid(value) = element {
+                    if let Element::Element(value) = element {
                         self.write_xml_compound(value)?;
                     } else {
                         self.push_whitespace();
@@ -98,49 +97,41 @@ impl XmlWriter<'_> {
                     return Err(PreprocessorError::IllegalTuple(*from));
                 }
             }
-            ParsedValue::Tag(tag, from, to) => {
+            ParsedValue::Tagged(tag, from, to) => {
                 self.write_tag(tag, *from)?;
             }
         }
         Ok(())
     }
 
-    fn write_tag(&mut self, tag: &ParsedTag, at: Position) -> Result<(), PreprocessorError> {
+    fn write_tag(&mut self, tag: &ParsedTaggedValue, at: Position) -> Result<(), PreprocessorError> {
         let name = tag.name();
-        let arguments = tag.get().unfold();
+        let inner_value = tag.get();
         if name.ends_with('!') {
             if name.deref() == "doctype!" {
-                if tag.has_attributes() || arguments.len() != 1 {
-                    return Err(PreprocessorError::MacroError(format!("doctype! macro cannot have attributes and must have 1 argument.")))
+                if tag.has_attributes() {
+                    return Err(PreprocessorError::MacroError(format!("doctype! macro cannot have attributes.")))
                 }
-                let doctype = arguments.get(0).unwrap();
+                if !inner_value.is_text() {
+                    if inner_value.is_tuple() {eprintln!("{}", inner_value.as_tuple().unwrap().len())};
+                    return Err(PreprocessorError::MacroError(format!("doctype! must have 1 text argument.")))
+                }
+                let doctype = inner_value;
                 self.push_str_non_breaking("<!DOCTYPE ");
                 self.push_str_non_breaking(doctype.as_text().unwrap().as_str());
                 self.push_str_non_breaking(">");
                 Ok(())
             } else if name.deref() == "raw!" {
-                if let Some(raw) = arguments.get(0) {
-                    if let Some(text) = raw.as_text() {
-                        self.output.push_str(text.as_str());
-                        Ok(())
-                    } else {
-                        Err(PreprocessorError::MacroError(format!("raw! can only take a text argument.")))
-                    }
+                if let Some(text) = inner_value.as_text() {
+                    self.output.push_str(text.as_str());
+                    Ok(())
                 } else {
-                    Err(PreprocessorError::MacroError(format!("raw! must have one text argument.")))
+                    Err(PreprocessorError::MacroError(format!("raw! can only take a text argument.")))
                 }
             } else {
                 Err(PreprocessorError::MacroError(format!("Unknown macro {}.", name)))
             }
         } else {
-            // Tag
-            let argument = if arguments.len() == 0 {
-                None // Self closing tag
-            } else if arguments.len() == 1 {
-                arguments.get(0) // Regular tag
-            } else {
-                return Err(PreprocessorError::TooManyArguments(at));
-            };
             self.push_non_breaking('<');
             self.push_str_non_breaking(&name);
             for Attribute(key, value) in tag.iter_attributes() {
@@ -159,11 +150,21 @@ impl XmlWriter<'_> {
                 };
             }
             self.push_non_breaking('>');
-            if let Some(argument) = argument {
-                self.write_xml_compound(argument)?;
+            if inner_value.is_tuple() {//todo
+                match inner_value.as_tuple().unwrap() {
+                    ParsedTuple::Unit => return Ok(()), // Self closing tag
+                    ParsedTuple::Single(s) => {
+                        if s.is_unit() {
+                            // Empty element
+                        } else {
+                            return Err(PreprocessorError::IllegalTuple(s.from()));
+                        }
+                    }
+                    ParsedTuple::Multiple(..) => return Err(PreprocessorError::TooManyArguments(at)),
+                }
             } else {
-                return Ok(());
-            };
+                self.write_xml_compound(inner_value)?
+            }
             self.push_str_non_breaking("</");
             self.push_str_non_breaking(name);
             self.push_non_breaking('>');
@@ -172,7 +173,7 @@ impl XmlWriter<'_> {
     }
 
     fn write_dictionary(&mut self, dictionary: &ParsedDictionary, at: Position) -> Result<(), PreprocessorError> {
-        for Entry(key, value) in dictionary.iter() {
+        for (key, value) in dictionary.iter() {
             self.push_non_breaking('<');
             self.push_str_non_breaking(key);
             self.push_non_breaking('>');

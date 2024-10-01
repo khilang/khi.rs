@@ -1,28 +1,28 @@
-//! Plain in-memory Khi structures.
+//! Plain in-memory representation of Khi data structures.
 
 use crate::{Dictionary, Pattern, Structure, Table};
 
-pub enum SimpleStructure {
+pub enum SimpleValue {
     Nil,
     Text(SimpleText),
     Dictionary(SimpleDictionary),
-    Table(SimpleTable),
-    Composition(Vec<SimpleStructure>),
-    Pattern(SimplePattern),
+    List(SimpleList),
+    Compound(Vec<SimpleValue>),
+    Tagged(SimpleTagged),
 }
 
-impl Value<SimpleText, SimpleDictionary, SimpleTable, SimpleComponent, SimplePattern> for SimpleStructure {
+impl Value<SimpleText, SimpleDictionary, SimpleList, SimpleComponent, SimpleTagged> for SimpleValue {
 
     type StructureIterator = ();
 
     fn length(&self) -> usize {
         match self {
-            SimpleStructure::Text(..) => 1,
-            SimpleStructure::Table(..) => 1,
-            SimpleStructure::Dictionary(..) => 1,
-            SimpleStructure::Pattern(..) => 1,
-            SimpleStructure::Composition(v) => v.len(),
-            SimpleStructure::Nil => 0,
+            SimpleValue::Text(..) => 1,
+            SimpleValue::List(..) => 1,
+            SimpleValue::Dictionary(..) => 1,
+            SimpleValue::Tagged(..) => 1,
+            SimpleValue::Compound(v) => v.len(),
+            SimpleValue::Nil => 0,
         }
     }
 
@@ -98,18 +98,18 @@ impl SimpleText {
 }
 
 /// A simple table implementation.
-pub struct SimpleTable {
-    entries: Vec<SimpleStructure>,
+pub struct SimpleList {
+    entries: Vec<SimpleValue>,
 }
 
 /// A simple dictionary implementation.
 pub struct SimpleDictionary {
-    entries: Vec<(SimpleText, SimpleStructure)>,
+    entries: Vec<(SimpleText, SimpleValue)>,
 }
 
 /// A simple tag implementation.
-pub struct SimplePattern {
+pub struct SimpleTagged {
     header: String,
-    attributes: Vec<(SimpleText, SimpleStructure)>,
+    attributes: Vec<(SimpleText, SimpleValue)>,
     arguments: Vec<SimpleComponent>
 }
