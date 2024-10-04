@@ -441,3 +441,16 @@ fn test_disallowed_whitespace() {
 fn test_optional_whitespace() {
 
 }
+
+#[test]
+fn test_section() {
+    let source = r#"
+        a: b
+        {c}:
+        d: e
+        [f]:
+        g; h; i
+    "#;
+    let dictionary = parse_dictionary_str(source).unwrap();
+    assert_eq!(dictionary.len(), 3);
+}

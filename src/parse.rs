@@ -486,6 +486,7 @@ pub mod parser {
                 }
             }
             let to = self.at_last();
+            dictionary_sections.push((vec![], direct_entries));
             let dictionary = create_dictionary(dictionary_sections, self.errors, from, to);
             Ok(dictionary)
         }
