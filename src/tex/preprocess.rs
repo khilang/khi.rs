@@ -11,6 +11,10 @@ use crate::pdm::{ParsedList, ParsedTaggedValue, ParsedValue, Position};
 use crate::{Compound, Element, List, Tagged, Text, Tuple, Value};
 
 pub fn write_tex(structure: &ParsedValue) -> Result<String, PreprocessorError> {
+    write_tex_with(structure, BreakMode::Mirror)
+}
+
+pub fn write_tex_with(structure: &ParsedValue, mode: BreakMode) -> Result<String, PreprocessorError> {
     let mut output = String::new();
     let mut writer = Writer { output: &mut output, column: 1, break_mode: BreakMode::Mirror, last_type: LastType::Whitespace, line: 1 };
     writer.write_inner(structure)?;
@@ -26,7 +30,12 @@ pub struct Writer<'a> {
 }
 
 enum BreakMode {
-    Never, Margin(usize), Mirror
+    /// Do not insert newlines.
+    Never,
+    /// Convert spaces to newlines after reaching a margin.
+    Margin(usize),
+    /// Convert spaces to newlines to mirror the input Khi document.
+    Mirror
 }
 
 #[derive(Eq, PartialEq)]
