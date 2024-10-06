@@ -41,7 +41,6 @@ impl ParsedValue {
         } else if len == 1 {
             terms.pop().unwrap()
         } else {
-            assert_eq!(len - 1, whitespace.len());
             ParsedValue::Compound(ParsedCompound { components: terms, whitespace }, from, to)
         }
     }
@@ -495,8 +494,8 @@ impl List<ParsedValue, ParsedText, ParsedDictionary, Self, ParsedCompound, Parse
 
 #[derive(Clone)]
 pub struct ParsedCompound {
-    components: Vec<ParsedValue>, // Todo reorganize
-    whitespace: Vec<bool>,
+    pub components: Vec<ParsedValue>, // Todo reorganize
+    pub whitespace: Vec<bool>,
 }
 
 impl ParsedCompound {}

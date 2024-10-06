@@ -274,22 +274,23 @@ pub mod parser {
             let from = self.at();
             let mut space_before = false;
             loop {
+                space_before = self.whitespace_before;
                 match self.t0 {
                     Reduced::String(..) => {
                         let text = self.parse_text()?;
-                        push_term(self, &mut terms, &mut whitespace, text);
+                        push_term(&mut terms, &mut whitespace, text, space_before);
                     }
                     Reduced::CurlyBracket(..) => {
                         let value = self.parse_bracketed_construct()?;
-                        push_term(self, &mut terms, &mut whitespace, value);
+                        push_term(&mut terms, &mut whitespace, value, space_before);
                     }
                     Reduced::SquareBracket(..) => {
                         let value = self.parse_bracketed_list()?;
-                        push_term(self, &mut terms, &mut whitespace, value);
+                        push_term(&mut terms, &mut whitespace, value, space_before);
                     },
                     Reduced::AngleBracket(..) => {
                         let value = self.parse_tagged_arguments()?;
-                        push_term(self, &mut terms, &mut whitespace, value);
+                        push_term(&mut terms, &mut whitespace, value, space_before);
                     },
                     Reduced::Tilde(..) => {
                         self.shift();
@@ -300,9 +301,9 @@ pub mod parser {
             }
             let to = self.at();
             return Ok(ParsedValue::from_terms(from, to, terms, whitespace));
-            fn push_term(parser: &Parser, terms: &mut Vec<ParsedValue>, whitespace: &mut Vec<bool>, component: ParsedValue) {
+            fn push_term(terms: &mut Vec<ParsedValue>, whitespace: &mut Vec<bool>, component: ParsedValue, ws_before: bool) {
                 if terms.len() != 0 {
-                    if parser.whitespace_before {
+                    if ws_before {
                         whitespace.push(true);
                     } else {
                         whitespace.push(false);
@@ -1382,7 +1383,7 @@ pub mod reducer {
                 Reduced::Colon(_, wa) => *wa,
                 Reduced::Semicolon(_, wa) => *wa,
                 Reduced::Bar(_, wa) => *wa,
-                Reduced::Tilde(_, wa) => *wa,
+                Reduced::Tilde(_, wa) => false, // TODO: Do this to never get ws after tilde.
                 Reduced::Bullet(_, wa) => *wa,
                 Reduced::SquareBracket(_, _, _, wa, _) => *wa,
                 Reduced::CurlyBracket(_, _, _, wa, _) => *wa,

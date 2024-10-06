@@ -458,3 +458,11 @@ fn test_section() {
     let c = c.as_dictionary().unwrap();
     assert_eq!(c.len(), 1);
 }
+
+#[test]
+fn test_compound() {
+    let src = "Aaaaa bbb cccc <d>:e:f";
+    let parse = parse_value_str(src).unwrap();
+    let compound = parse.as_compound().unwrap();
+    assert!(compound.whitespace.get(0).unwrap());
+}
