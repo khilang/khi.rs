@@ -277,19 +277,19 @@ pub mod parser {
                 match self.t0 {
                     Reduced::String(..) => {
                         let text = self.parse_text()?;
-                        push_term(&mut terms, &mut whitespace, &mut space_before, text);
+                        push_term(self, &mut terms, &mut whitespace, text);
                     }
                     Reduced::CurlyBracket(..) => {
                         let value = self.parse_bracketed_construct()?;
-                        push_term(&mut terms, &mut whitespace, &mut space_before, value);
+                        push_term(self, &mut terms, &mut whitespace, value);
                     }
                     Reduced::SquareBracket(..) => {
                         let value = self.parse_bracketed_list()?;
-                        push_term(&mut terms, &mut whitespace, &mut space_before, value);
+                        push_term(self, &mut terms, &mut whitespace, value);
                     },
                     Reduced::AngleBracket(..) => {
                         let value = self.parse_tagged_arguments()?;
-                        push_term(&mut terms, &mut whitespace, &mut space_before, value);
+                        push_term(self, &mut terms, &mut whitespace, value);
                     },
                     Reduced::Tilde(..) => {
                         self.shift();
@@ -300,14 +300,13 @@ pub mod parser {
             }
             let to = self.at();
             return Ok(ParsedValue::from_terms(from, to, terms, whitespace));
-            fn push_term(terms: &mut Vec<ParsedValue>, whitespace: &mut Vec<bool>, after_whitespace: &mut bool, component: ParsedValue) {
+            fn push_term(parser: &Parser, terms: &mut Vec<ParsedValue>, whitespace: &mut Vec<bool>, component: ParsedValue) {
                 if terms.len() != 0 {
-                    if *after_whitespace {
+                    if parser.whitespace_before {
                         whitespace.push(true);
                     } else {
                         whitespace.push(false);
-                    };
-                    *after_whitespace = false;
+                    }
                 };
                 terms.push(component);
             }
