@@ -16,7 +16,7 @@ pub fn write_tex(structure: &ParsedValue) -> Result<String, PreprocessorError> {
 
 pub fn write_tex_with(structure: &ParsedValue, mode: BreakMode) -> Result<String, PreprocessorError> {
     let mut output = String::new();
-    let mut writer = Writer { output: &mut output, column: 1, break_mode: BreakMode::Mirror, last_type: LastType::Whitespace, line: 1 };
+    let mut writer = Writer { output: &mut output, column: 1, break_mode: mode, last_type: LastType::Whitespace, line: 1 };
     writer.write_inner(structure)?;
     Ok(output)
 }
@@ -29,7 +29,7 @@ pub struct Writer<'a> {
     line: usize, // Last line read in the source file
 }
 
-enum BreakMode {
+pub enum BreakMode {
     /// Do not insert newlines.
     Never,
     /// Convert spaces to newlines after reaching a margin.

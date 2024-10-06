@@ -453,4 +453,8 @@ fn test_section() {
     "#;
     let dictionary = parse_dictionary_str(source).unwrap();
     assert_eq!(dictionary.len(), 3);
+    let c = dictionary.get("c").unwrap();
+    assert!(c.is_dictionary());
+    let c = c.as_dictionary().unwrap();
+    assert_eq!(c.len(), 1);
 }
