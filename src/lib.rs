@@ -87,6 +87,11 @@ pub trait Value<
     /// If the value is a tuple, its components are iterated over. Otherwise,
     /// the single value itself is iterated over.
     fn iter_as_tuple<'b>(&'b self) -> impl Iterator<Item=&'b Vl> where Vl: 'b;
+    /// Get the length of this value as a tuple.
+    ///
+    /// If the value is a tuple, its length is returned. Otherwise, 1 is
+    /// returned.
+    fn len_as_tuple(&self) -> usize;
 }
 
 /// Text.

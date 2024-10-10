@@ -306,7 +306,7 @@ impl Writer<'_> {
                 self.line += 1;
                 self.write_raw(text.as_str());
             } else if name.eq("raw!") {
-                if !inner_value.is_tuple() {
+                if !inner_value.is_text() {
                     return Err(PreprocessorError::MacroError(at, format!("raw! must take 1 text argument.")));
                 }
                 let text = inner_value.as_text().unwrap();

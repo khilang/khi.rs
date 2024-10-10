@@ -89,6 +89,25 @@ impl ParsedValue {
         matches!(self, ParsedValue::Tuple(ParsedTuple::Unit, ..))
     }
 
+    fn elements_as_tuple(&self) -> Vec<&ParsedValue> {
+        match self {
+            ParsedValue::Tuple(t, _, _) => {
+                match t {
+                    ParsedTuple::Unit => vec![],
+                    ParsedTuple::Single(v) => vec![v],
+                    ParsedTuple::Multiple(vs) => {
+                        let mut r = vec![];
+                        for v in vs.iter() {
+                            r.push(v);
+                        }
+                        r
+                    },
+                }
+            }
+            v => vec![v],
+        }
+    }
+
 }
 
 impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCompound, ParsedTuple, ParsedTaggedValue> for ParsedValue {
@@ -223,6 +242,14 @@ impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCompound
             TupleIterator::Single(false, self)
         }
     }
+
+    fn len_as_tuple(&self) -> usize {
+        match self {
+            ParsedValue::Tuple(t, _, _) => t.len(),
+            _ => 1,
+        }
+    }
+
 }
 
 //// Text
