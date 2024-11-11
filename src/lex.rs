@@ -16,6 +16,7 @@ pub enum Token {
     Semicolon(Position),
     Bar(Position),
     Tilde(Position),
+    DoubleArrow(Position),
     LeftBracket(Position),
     RightBracket(Position),
     LeftSquare(Position),
@@ -37,6 +38,7 @@ impl Token {
             Token::Semicolon(at) => *at,
             Token::Bar(at) => *at,
             Token::Tilde(at) => *at,
+            Token::DoubleArrow(at) => *at,
             Token::LeftBracket(at) => *at,
             Token::RightBracket(at) => *at,
             Token::LeftSquare(at) => *at,
@@ -139,32 +141,32 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
                     let word = lex_word(&mut iter)?;
                     tokens.push(word);
                 } else { // Colon
-                    iter.next();
                     tokens.push(Token::Colon(iter.position()));
+                    iter.next();
                 }
             } else if c == ';' { // Semicolon
                 if let Some(';') = iter.d { // Semicolon glyph
                     let word = lex_word(&mut iter)?;
                     tokens.push(word);
                 } else { // Semicolon
-                    iter.next();
                     tokens.push(Token::Semicolon(iter.position()));
+                    iter.next();
                 }
             } else if c == '|' {
                 if let Some('|') = iter.d { // Bar glyph
                     let word = lex_word(&mut iter)?;
                     tokens.push(word);
                 } else { // Bar
-                    iter.next();
                     tokens.push(Token::Bar(iter.position()));
+                    iter.next();
                 }
             } else if c == '~' {
                 if let Some('~') = iter.d { // Tilde glyph
                     let word = lex_word(&mut iter)?;
                     tokens.push(word);
                 } else { // Tilde
-                    iter.next();
                     tokens.push(Token::Tilde(iter.position()));
+                    iter.next();
                 }
             } else if c == '`' { // Illegal escape character
                 let word = lex_word(&mut iter)?;
@@ -173,17 +175,17 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
                 let transcription = lex_transcription(&mut iter)?;
                 tokens.push(transcription);
             } else if c == '{' { // Left bracket
-                iter.next();
                 tokens.push(Token::LeftBracket(iter.position()));
+                iter.next();
             } else if c == '}' { // Right bracket
-                iter.next();
                 tokens.push(Token::RightBracket(iter.position()));
+                iter.next();
             } else if c == '[' { // Left square
-                iter.next();
                 tokens.push(Token::LeftSquare(iter.position()));
-            } else if c == ']' { // Right square
                 iter.next();
+            } else if c == ']' { // Right square
                 tokens.push(Token::RightSquare(iter.position()));
+                iter.next();
             } else if c == '<' {
                 if let Some(d) = iter.d {
                     if d == '<' { // Left angle glyph
@@ -193,20 +195,20 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
                         let text_block = lex_text_block(&mut iter)?;
                         tokens.push(text_block);
                     } else { // Left angle
-                        iter.next();
                         tokens.push(Token::LeftAngle(iter.position()));
+                        iter.next();
                     };
                 } else { // Left angle
-                    iter.next();
                     tokens.push(Token::LeftAngle(iter.position()));
+                    iter.next();
                 }
             } else if c == '>' {
                 if let Some('>') = iter.d { // Right angle glyph
                     let token = lex_word(&mut iter)?;
                     tokens.push(token);
                 } else { // Right angle
-                    iter.next();
                     tokens.push(Token::RightAngle(iter.position()));
+                    iter.next();
                 }
             } else if c == '#' {
                 if let Some(d) = iter.d {
@@ -221,6 +223,9 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
                     let whitespace = lex_whitespace(&mut iter)?;
                     tokens.push(whitespace);
                 }
+            } else if c == '=' && iter.d == Some('>') && iter.e != Some('>') {
+                tokens.push(Token::DoubleArrow(iter.position()));
+                iter.next(); iter.next();
             } else { // Text glyph
                 let word = lex_word(&mut iter)?;
                 tokens.push(word);
@@ -317,6 +322,8 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
                 } else {
                     break;
                 };
+            } else if c == '=' && iter.d == Some('>') && iter.e != Some('>') { // =>
+                break;
             } else { // Glyph
                 iter.next();
                 string.push(c);

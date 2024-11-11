@@ -358,30 +358,62 @@ pub mod parser {
         /// Parse an inner value.
         ///
         /// ```text
-        /// <inner-value> → <block>
+        /// <inner-value> → <tuple-element>
         ///               | <tuple>
         ///
-        /// <tuple> → <block> "|" <block>
-        ///         | <block> "|" <tuple>
+        /// <tuple> → <tuple-element> "|" <tuple-element>
+        ///         | <tuple-element> "|" <tuple>
+        ///
+        /// <tuple-element> → <block>
+        ///                 | <mapped-key>
         /// ```
         fn parse_inner_value(&mut self) -> Result<ParsedValue, ParseError> {
             let mut elements = vec![];
+            let mut mapped_keys = vec![];
             let from = self.at();
             loop {
-                let element = self.parse_block()?;
-                elements.push(element);
-                if !matches!(self.t0, Reduced::Bar(..)) || !matches!(self.t1, Reduced::String(..) | Reduced::CurlyBracket(..) | Reduced::SquareBracket(..) | Reduced::AngleBracket(..) | Reduced::Tilde(..)) {
+                if !matches!(self.t0, Reduced::String(..) | Reduced::AssignmentHeader(..)) || !matches!(self.t1, Reduced::Colon(..) | Reduced::MapArrow(..)) {
+                    let element = self.parse_block()?;
+                    elements.push(element);
+                } else {
+                    let mapped_key = self.parse_mapped_key()?;
+                    mapped_keys.push(mapped_key);
+                }
+                if !matches!(self.t0, Reduced::Bar(..)) || !matches!(self.t1, Reduced::String(..) | Reduced::AssignmentHeader(..) | Reduced::CurlyBracket(..) | Reduced::SquareBracket(..) | Reduced::AngleBracket(..) | Reduced::Tilde(..)) {
                     break;
                 }
                 self.shift();
             }
             let to = self.at_last();
+            if !mapped_keys.is_empty() {
+                let dictionary = create_dictionary(vec![(vec![], mapped_keys)], &mut self.errors, from, to);
+                elements.insert(0, ParsedValue::Dictionary(dictionary, from, to));
+            }
             let inner_value = if elements.len() == 1 {
                 elements.pop().unwrap()
             } else {
                 ParsedValue::Tuple(ParsedTuple::Multiple(elements.into_boxed_slice()), from, to)
             };
             Ok(inner_value)
+        }
+
+        /// Parse a mapped key.
+        ///
+        /// ```text
+        /// <mapped-key> → <key> "=>" <block>
+        /// ```
+        fn parse_mapped_key(&mut self) -> Result<(ParsedKey, ParsedValue), ParseError> {
+            let from = self.t0.at();
+            if !matches!(self.t0, Reduced::AssignmentHeader(..) | Reduced::String(..)) {
+                return ParseError::token_expectation_error(&[Rule::Key], self.t0, Rule::MappedKey, from);
+            }
+            let key = self.parse_key()?;
+            if !matches!(self.t0, Reduced::MapArrow(..)) {
+                return ParseError::token_expectation_error(&[Rule::MapArrow], self.t0, Rule::MappedKey, from);
+            }
+            self.shift();
+            let value = self.parse_block()?;
+            Ok((key, value))
         }
 
         /// Parse a tagged value.
@@ -506,25 +538,10 @@ pub mod parser {
                     self.shift();
                     let mut parser = Parser::new(&scope, self.strings, self.errors, *fw, *ht);
                     parser.require_no_whitespace_before();
-                    loop {
-                        match parser.t0 {
-                            Reduced::String(.., s) | Reduced::AssignmentHeader(.., s) => {
-                                let k = parser.store_str(s);
-                                key.push(k);
-                            }
-                            _ => return ParseError::token_expectation_error(&[Rule::Key], parser.t0, Rule::Header, at)
-                        }
-                        parser.require_no_whitespace_after();
-                        parser.shift();
-                        if !matches!(parser.t0, Reduced::Colon(..)) {
-                            break;
-                        }
-                        parser.require_no_whitespace_after();
-                        parser.shift();
-                    }
+                    key = parser.parse_key()?;
                     parser.require_end();
                 }
-                _ => return ParseError::token_expectation_error(&[Rule::Header], self.t0, Rule::Header, at),
+                _ => return ParseError::token_expectation_error(&[Rule::Key], self.t0, Rule::Header, at),
             }
             Ok(key)
         }
@@ -605,35 +622,70 @@ pub mod parser {
         ///       | <string>":"<key>
         /// ```
         fn parse_entry(&mut self) -> Result<ParsedEntry, ParseError> {
-            let mut key = vec![];
             let at = self.at();
-            if let Reduced::AssignmentHeader(.., s) = self.t0 {
-                let k = self.store_str(s);
-                key.push(k);
-                self.shift();
-                if !matches!(self.t0, Reduced::Colon(..)) {
-                    return ParseError::token_expectation_error(&[Rule::Colon], self.t0, Rule::Key, at);
-                }
-                loop {
-                    self.require_no_whitespace_before();
-                    self.shift();
-                    if matches!(self.t1, Reduced::Colon(..)) {
-                        if let Reduced::String(.., s) = self.t0 {
-                            let k = self.store_str(s);
-                            key.push(k);
-                            self.shift();
-                        } else {
-                            return ParseError::token_expectation_error(&[Rule::Key], self.t0, Rule::Key, at);
-                        }
-                    } else {
-                        break;
-                    }
-                }
+            if let Reduced::AssignmentHeader(.., s) | Reduced::String(.., s) = self.t0 {
+                let key = self.parse_entry_key()?;
+                //if !matches!(self.t0, Reduced::Colon(..)) {
+                //    return ParseError::token_expectation_error(&[Rule::Colon], self.t0, Rule::Key, at);
+                //}
+                //self.shift();
                 let value = self.parse_value()?;
                 Ok((key, value))
             } else {
                 return ParseError::token_expectation_error(&[Rule::Key], self.t0, Rule::Entry, at);
             }
+        }
+
+        /// Parse a key and a colon.
+        fn parse_entry_key(&mut self) -> Result<Vec<Rc<str>>, ParseError> {
+            let mut key = vec![];
+            loop {
+                let s = match self.t0 {
+                    Reduced::String(_, _, _, _, s) => s,
+                    Reduced::AssignmentHeader(_, _, _, s) => s,
+                    _ => return ParseError::token_expectation_error(&[Rule::String], self.t0, Rule::Key, self.t0.at()),
+                };
+                let k = self.store_str(s);
+                key.push(k);
+                self.shift();
+                if !matches!(self.t0, Reduced::Colon(..)) {
+                    return ParseError::token_expectation_error(&[Rule::Colon], self.t0, Rule::Key, self.t0.at());
+                }
+                self.require_no_whitespace_before();
+                self.shift();
+                if !matches!(self.t0, Reduced::String(..) | Reduced::AssignmentHeader(..)) || !matches!(self.t1, Reduced::Colon(..)) {
+                    break;
+                }
+                self.require_no_whitespace_before();
+            }
+            Ok(key)
+        }
+
+        /// Parse a key.
+        ///
+        /// ```text
+        /// <key> → <string>
+        ///       | <string>":"<key>
+        /// ```
+        fn parse_key(&mut self) -> Result<Vec<Rc<str>>, ParseError> {
+            let mut key = vec![];
+            loop {
+                match self.t0 {
+                    Reduced::String(.., s) | Reduced::AssignmentHeader(.., s) => {
+                        let k = self.store_str(s);
+                        key.push(k);
+                    }
+                    _ => return ParseError::token_expectation_error(&[Rule::String], self.t0, Rule::Key, self.t0.at())
+                }
+                self.shift();
+                if !matches!(self.t0, Reduced::Colon(..)) {
+                    break;
+                }
+                self.require_no_whitespace_before();
+                self.require_no_whitespace_after();
+                self.shift();
+            }
+            Ok(key)
         }
 
         /// Parse a list.
@@ -1127,6 +1179,7 @@ pub mod parser {
             Reduced::Semicolon(..) => Rule::Semicolon,
             Reduced::Bar(..) => Rule::Bar,
             Reduced::Tilde(..) => Rule::Tilde,
+            Reduced::MapArrow(..) => Rule::MapArrow,
             Reduced::Bullet(..) => Rule::RightAngle,
             Reduced::CurlyBracket(..) => Rule::Bracket,
             Reduced::SquareBracket(..) => Rule::Square,
@@ -1187,6 +1240,8 @@ pub mod parser {
         SquareOpen,
         BracketOpen,
         Root,
+        MappedKey,
+        MapArrow,
     }
 
     #[derive(Clone)]
@@ -1337,6 +1392,7 @@ pub mod reducer {
         Bar(Position, bool),
         Tilde(Position, bool),
         Bullet(Position, bool),
+        MapArrow(Position, bool),
         CurlyBracket(Position, Position, bool, bool, Vec<Reduced>),
         SquareBracket(Position, Position, bool, bool, Vec<Reduced>),
         AngleBracket(Position, Position, bool, bool, Vec<Reduced>),
@@ -1366,6 +1422,7 @@ pub mod reducer {
                 Reduced::Bar(..) => Rule::Bar,
                 Reduced::Tilde(..) => Rule::Tilde,
                 Reduced::Bullet(..) => Rule::RightAngle,
+                Reduced::MapArrow(..) => Rule::MapArrow,
                 Reduced::CurlyBracket(..) => Rule::Bracket,
                 Reduced::SquareBracket(..) => Rule::Square,
                 Reduced::AngleBracket(..) => Rule::AngularBracket,
@@ -1385,6 +1442,7 @@ pub mod reducer {
                 Reduced::Bar(_, wa) => *wa,
                 Reduced::Tilde(_, wa) => false, // TODO: Do this to never get ws after tilde.
                 Reduced::Bullet(_, wa) => *wa,
+                Reduced::MapArrow(_, wa) => *wa,
                 Reduced::SquareBracket(_, _, _, wa, _) => *wa,
                 Reduced::CurlyBracket(_, _, _, wa, _) => *wa,
                 Reduced::AngleBracket(_, _, _, wa, _) => *wa,
@@ -1405,6 +1463,7 @@ pub mod reducer {
                 Reduced::Bar(at, _) => *at,
                 Reduced::Tilde(at, _) => *at,
                 Reduced::Bullet(at, _) => *at,
+                Reduced::MapArrow(at, _) => *at,
                 Reduced::SquareBracket(from, _, _, _, _) => *from,
                 Reduced::CurlyBracket(from, _, _, _, _) => *from,
                 Reduced::AngleBracket(from, _, _, _, _) => *from,
@@ -1428,6 +1487,7 @@ pub mod reducer {
                 Reduced::Bar(at, ..) => *at,
                 Reduced::Tilde(at, ..) => *at,
                 Reduced::Bullet(at, ..) => *at,
+                Reduced::MapArrow(at, ..) => *at,
                 Reduced::SquareBracket(_, to, ..) => *to,
                 Reduced::CurlyBracket(_, to, ..) => *to,
                 Reduced::AngleBracket(_, to, ..) => *to,
@@ -1541,6 +1601,12 @@ pub mod reducer {
                         let following = self.t[1];
                         let word = Reduced::Tilde(at, Self::is_whitespace(following));
                         tokens.push(word);
+                        self.shift();
+                    }
+                    Token::DoubleArrow(at) => {
+                        let following = self.t[1];
+                        let arrow = Reduced::MapArrow(at, Self::is_whitespace(following));
+                        tokens.push(arrow);
                         self.shift();
                     }
                     Token::RightAngle(at) => {

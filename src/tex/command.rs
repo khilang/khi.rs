@@ -23,7 +23,7 @@ fn preprocess() -> Result<String, String> {
         let mut file = File::open(&first).unwrap();
         let mut source = String::new();
         file.read_to_string(&mut source).unwrap();
-        print!("Preprocessing document of size: {}\n\n", source.len());
+        eprint!("Preprocessing document of size: {}\n\n", source.len());
         let document = match parse_value_str(&source) {
             Ok(document) => document,
             Err(errors) => {
