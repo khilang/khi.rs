@@ -9,7 +9,7 @@ use crate::translate_escape_character;
 #[derive(PartialEq, Eq, Clone)]
 pub enum Token {
     Whitespace(Position),
-    Word(Position, String),
+    Word(Position, String, Vec<bool>),
     Transcription(Position, String),
     TextBlock(Position, String),
     Colon(Position),
@@ -274,6 +274,7 @@ fn lex_whitespace<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<
 fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token, LexError> {
     let at = iter.position();
     let mut string = String::new();
+    let mut escapes = vec![];
     loop {
         if let Some(c) = iter.c {
             if is_whitespace(c) { // Whitespace
@@ -285,6 +286,7 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
                     if d == c { // Repeated escape sequence
                         iter.next(); iter.next();
                         string.push(c);
+                        escapes.push(true);
                     } else { // Reserved
                         break;
                     }
@@ -299,6 +301,7 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
                     };
                     iter.next_two();
                     string.push(x);
+                    escapes.push(true);
                 } else {
                     return Err(LexError::EscapeEos);
                 }
@@ -318,6 +321,7 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
                     } else { // # Hash glyph
                         iter.next();
                         string.push('#');
+                        escapes.push(false);
                     }
                 } else {
                     break;
@@ -327,12 +331,13 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
             } else { // Glyph
                 iter.next();
                 string.push(c);
+                escapes.push(false);
             };
         } else { // End
             break;
         };
     };
-    Ok(Token::Word(at, string))
+    Ok(Token::Word(at, string, escapes))
 }
 
 /// Lex a transcription.

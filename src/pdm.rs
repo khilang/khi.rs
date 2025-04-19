@@ -256,7 +256,8 @@ impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCompound
 
 #[derive(PartialEq, Eq, Clone)]
 pub struct ParsedText {
-    pub str: Rc<str>
+    pub str: Rc<str>,
+    pub escapes: Vec<bool>,
 }
 
 impl Text<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCompound, ParsedTuple, ParsedTaggedValue> for ParsedText {

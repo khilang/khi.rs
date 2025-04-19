@@ -324,6 +324,7 @@ pub mod parser {
         /// ```
         fn parse_text(&mut self) -> Result<ParsedValue, ParseError> {
             let mut text = String::new();
+            let mut escapes = vec![];
             let mut space_before = false;
             let from = self.at();
             if !matches!(self.t0, Reduced::String(..)) {
@@ -331,11 +332,13 @@ pub mod parser {
             }
             loop {
                 match self.t0 {
-                    Reduced::String(.., b, _, string) => {
+                    Reduced::String(.., b, _, string, stresc) => {
                         if space_before {
                             text.push(' ');
+                            escapes.push(false);
                         }
                         text.push_str(string);
+                        escapes.extend(stresc);
                         space_before = *b;
                         self.shift();
                     }
@@ -351,7 +354,7 @@ pub mod parser {
             }
             let to = self.at();
             let str = self.store_str(&text);
-            let text = ParsedText { str };
+            let text = ParsedText { str, escapes };
             Ok(ParsedValue::Text(text, from, to))
         }
 
@@ -623,7 +626,7 @@ pub mod parser {
         /// ```
         fn parse_entry(&mut self) -> Result<ParsedEntry, ParseError> {
             let at = self.at();
-            if let Reduced::AssignmentHeader(.., s) | Reduced::String(.., s) = self.t0 {
+            if let Reduced::AssignmentHeader(.., s) | Reduced::String(.., s, _) = self.t0 {
                 let key = self.parse_entry_key()?;
                 //if !matches!(self.t0, Reduced::Colon(..)) {
                 //    return ParseError::token_expectation_error(&[Rule::Colon], self.t0, Rule::Key, at);
@@ -641,7 +644,7 @@ pub mod parser {
             let mut key = vec![];
             loop {
                 let s = match self.t0 {
-                    Reduced::String(_, _, _, _, s) => s,
+                    Reduced::String(_, _, _, _, s, _) => s,
                     Reduced::AssignmentHeader(_, _, _, s) => s,
                     _ => return ParseError::token_expectation_error(&[Rule::String], self.t0, Rule::Key, self.t0.at()),
                 };
@@ -671,7 +674,7 @@ pub mod parser {
             let mut key = vec![];
             loop {
                 match self.t0 {
-                    Reduced::String(.., s) | Reduced::AssignmentHeader(.., s) => {
+                    Reduced::String(.., s, _) | Reduced::AssignmentHeader(.., s) => {
                         let k = self.store_str(s);
                         key.push(k);
                     }
@@ -884,12 +887,12 @@ pub mod parser {
                 self.require_no_whitespace_after();
                 self.shift();
                 match self.t0 {
-                    Reduced::String(.., s) => {
+                    Reduced::String(.., s, escapes) => {
                         let from = self.at();
                         self.shift();
                         let to = self.at();
                         let str = self.store_str(s);
-                        let text = ParsedValue::Text(ParsedText { str }, from, to);
+                        let text = ParsedValue::Text(ParsedText { str, escapes: escapes.clone() }, from, to);
                         arguments.push(text);
                     }
                     Reduced::CurlyBracket(..) => {
@@ -930,7 +933,7 @@ pub mod parser {
                     return Ok(None);
                 }
                 let name = match parser.t0 {
-                    Reduced::String(from, _, _, t, name) | Reduced::AssignmentHeader(from, _, t, name) => {
+                    Reduced::String(from, _, _, t, name, _) | Reduced::AssignmentHeader(from, _, t, name) => {
                         if *t != StringType::Word {
                             parser.errors.push(ParseError::TagNameMustBeWord(*from, parser.t0.to_type()));
                         }
@@ -967,7 +970,7 @@ pub mod parser {
             }
             loop {
                 let key = match self.t0 {
-                    Reduced::String(_, _, _, t, key) | Reduced::AssignmentHeader(_, _, t, key) => {
+                    Reduced::String(_, _, _, t, key, _) | Reduced::AssignmentHeader(_, _, t, key) => {
                         if *t != StringType::Word {
                             return Err(ParseError::AttributeMustBeWord(self.at(), self.t0.to_type()));
                         }
@@ -1051,7 +1054,7 @@ pub mod parser {
         /// ```
         fn parse_string(&mut self) -> Result<Rc<str>, ParseError> {
             match self.t0 {
-                Reduced::String(.., text) => {
+                Reduced::String(.., text, _) => {
                     self.shift();
                     Ok(self.store_str(text))
                 }
@@ -1386,7 +1389,8 @@ pub mod reducer {
     /// - String → AssignmentHeader
     #[derive(PartialEq, Eq, Clone)]
     pub enum Reduced {
-        String(Position, Position, bool, StringType, String),
+        /// from, to, bool, type, content, escapes
+        String(Position, Position, bool, StringType, String, Vec<bool>),
         Colon(Position, bool),
         Semicolon(Position, bool),
         Bar(Position, bool),
@@ -1558,13 +1562,26 @@ pub mod reducer {
                     Token::Whitespace(_) => {
                         self.shift();
                     }
-                    Token::Word(at, string) | Token::Transcription(at, string) | Token::TextBlock(at, string) => {
+                    Token::Word(at, string, _) | Token::Transcription(at, string) | Token::TextBlock(at, string) => {
                         let string_type = if matches!(self.t[0], Token::Word(..)) {
                             StringType::Word
                         } else if matches!(self.t[0], Token::Transcription(..)) {
                             StringType::Transcription
                         } else {
                             StringType::TextBlock
+                        };
+                        let escaped = match self.t[0] {
+                            Token::Word(_, _, unescaped) => {
+                                unescaped.clone()
+                            }
+                            Token::Transcription(_, string) | Token::TextBlock(_, string) => {
+                                let mut escapes = vec![];
+                                for c in string.chars() {
+                                    escapes.push(true);
+                                }
+                                escapes
+                            }
+                            _ => unreachable!(),
                         };
                         let colon_before = matches!(self.previous, Token::Colon(..));
                         self.shift();
@@ -1575,7 +1592,7 @@ pub mod reducer {
                             tokens.push(header);
                         } else {
                             let whitespace_after = matches!(self.t[0], Token::Whitespace(..));
-                            let word = Reduced::String(at, to, whitespace_after, string_type, string.clone());
+                            let word = Reduced::String(at, to, whitespace_after, string_type, string.clone(), escaped);
                             tokens.push(word);
                         }
                     }
