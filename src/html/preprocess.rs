@@ -1,6 +1,6 @@
 use std::ops::Deref;
-use crate::{Dictionary, Tagged, Value, Text, Element, Attribute, Compound, Tuple};
-use crate::pdm::{ParsedDictionary, ParsedTaggedValue, ParsedTuple, ParsedValue, Position};
+use crate::{Dictionary, Tagged, Value, Text, Element, Attribute, Catenation, Tuple};
+use crate::parse::pdm::{ParsedDictionary, ParsedTaggedValue, ParsedTuple, ParsedValue, Position};
 
 pub fn write_html(value: &ParsedValue) -> Result<String, PreprocessorError> {
     let mut output = String::new();
@@ -81,7 +81,7 @@ impl XmlWriter<'_> {
             ParsedValue::List(table, from, to) => {
                 return Err(PreprocessorError::IllegalTable(*from));
             }
-            ParsedValue::Compound(compound, from, to) => {
+            ParsedValue::Catenation(compound, from, to) => {
                 for element in compound.iter() {
                     if let Element::Element(value) = element {
                         self.write_xml_compound(value)?;

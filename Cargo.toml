@@ -1,7 +1,7 @@
 [package]
 name = "khi"
 description = "Khi parser & library"
-version = "0.16.1"
+version = "0.17.0"
 authors = ["Torm"]
 edition = "2021"
 rust-version = "1.65"
@@ -16,23 +16,19 @@ serde = "1.0.192"
 numtoa = "0.2.4"
 hex = "0.4.3"
 
+[dev-dependencies]
+indoc = "2.0.7"
+
 [features]
 default = ["parse"]
 # Lexer and parser
 parse = []
 # XML/HTML preprocessor
 html = ["parse"]
-# LaTeX preprocessor
-tex = ["parse"]
 # Serde serialization and deserialization
 #serde = []
 # Encoding and decoding Khi data structures
 #enc = []
-
-[[bin]]
-name = "khi-tex-cmd"
-path = "src/tex/command.rs"
-required-features = ["tex"]
 
 [[bin]]
 name = "khi-html-cmd"

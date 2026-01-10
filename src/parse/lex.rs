@@ -1,7 +1,7 @@
 //! Khi lexer reference implementation.
 
 use std::ops::Deref;
-use crate::pdm::Position;
+use crate::parse::pdm::Position;
 use crate::translate_escape_character;
 
 //// Token
@@ -16,7 +16,6 @@ pub enum Token {
     Semicolon(Position),
     Bar(Position),
     Tilde(Position),
-    DoubleArrow(Position),
     LeftBracket(Position),
     RightBracket(Position),
     LeftSquare(Position),
@@ -38,7 +37,6 @@ impl Token {
             Token::Semicolon(at) => *at,
             Token::Bar(at) => *at,
             Token::Tilde(at) => *at,
-            Token::DoubleArrow(at) => *at,
             Token::LeftBracket(at) => *at,
             Token::RightBracket(at) => *at,
             Token::LeftSquare(at) => *at,
@@ -223,9 +221,6 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
                     let whitespace = lex_whitespace(&mut iter)?;
                     tokens.push(whitespace);
                 }
-            } else if c == '=' && iter.d == Some('>') && iter.e != Some('>') {
-                tokens.push(Token::DoubleArrow(iter.position()));
-                iter.next(); iter.next();
             } else { // Text glyph
                 let word = lex_word(&mut iter)?;
                 tokens.push(word);
@@ -326,8 +321,6 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
                 } else {
                     break;
                 };
-            } else if c == '=' && iter.d == Some('>') && iter.e != Some('>') { // =>
-                break;
             } else { // Glyph
                 iter.next();
                 string.push(c);
@@ -349,8 +342,18 @@ fn lex_transcription<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Resu
     iter.next();
     loop {
         if let Some(c) = iter.c {
-            if c == '\\' || c == '\n' {
+            if c == '\\' {
                 iter.next();
+                break;
+            } else if c == '\n' {
+                iter.next();
+                while let Some(c) = iter.c {
+                    if is_whitespace(c) {
+                        iter.next();
+                    } else {
+                        break;
+                    }
+                }
                 break;
             } else if c == '`' {
                 if let Some(d) = iter.d {

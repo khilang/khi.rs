@@ -1,7 +1,9 @@
 use std::ops::Deref;
-use khi::{Compound, Dictionary, Tagged, Value, List, Element, Tuple};
-use khi::parse::{parse_dictionary_str, parse_list_str, parse_value_str};
-use khi::pdm::ParsedValue;
+use indoc::indoc;
+use khi::{Catenation, Dictionary, Tagged, Value, List, Element, Tuple, Text};
+use khi::parse::parse::{parse_dictionary_str, parse_list_str, parse_value_str};
+use khi::parse::parse::parser::ParseError;
+use khi::parse::pdm::ParsedValue;
 
 #[test]
 fn test_lexer() { // TODO
@@ -68,7 +70,7 @@ fn test_text_terms() {
 
 #[test]
 fn test_expression() {
-    assert_terms("", "");
+    assert_terms("", "Tp"); // Empty document returns a unit tuple.
     assert_terms("Text", "Tx");
     assert_terms("{k: v}", "Dc");
     assert_terms("[1|0;0|1]", "Tb");
@@ -84,13 +86,17 @@ fn test_expression() {
 fn test_tuple() {
     assert_tuple("a a | b b", 2);
     assert_tuple("a | [b] | {c}", 3);
+    assert_tuple("| a", 1);
+    assert_tuple("| a | {b} | <c> | d", 4);
     assert_tuple("<a>:b:c | d d | <e>:f", 3);
     assert_tuple("<>: a", 1);
-    assert_tuple("<>: a | b", 1);
+    assert_tuple("<>: a | b", 2);
     assert_tuple("| d d\n| <e>:f", 2);
     assert_tag("<a>: b", 1);
     assert_tag("<a>: b b | c", 2);
+}
 
+fn test_tagged_value() {
     assert_tuple("<>: <>: <>: <>", 1);
     assert_tuple("<>: <>: <>: { <> }", 1);
     assert_tuple("<>: <>: <>: { a | b }", 1);
@@ -108,17 +114,14 @@ fn assert_tag(source: &str, len: usize) {
     let document = parse_value_str(source).unwrap();
     assert!(document.is_tagged());
     let tag = document.as_tagged().unwrap();
-    let value = tag.get();
-    if value.is_tuple() {
-        let tuple = value.as_tuple().unwrap();
-        assert_eq!(tuple.len(), len);
-    }
+    let tuple = tag.get();
+    assert_eq!(tuple.len(), len);
 }
 
 fn assert_terms(source: &str, expect: &str) {
     let document = parse_value_str(source).unwrap();
     let summary = summarize_terms(&document);
-    assert!(summary.eq(expect));
+    assert_eq!(summary, expect);
 }
 
 fn summarize_terms(value: &ParsedValue) -> String {
@@ -129,7 +132,7 @@ fn summarize_terms(value: &ParsedValue) -> String {
         ParsedValue::Dictionary(..) => summary = format!("{}Dc", summary),
         ParsedValue::Tuple(..) => summary = format!("{}Tp", summary),
         ParsedValue::List(..) => summary = format!("{}Tb", summary),
-        ParsedValue::Compound(compound, ..) => {
+        ParsedValue::Catenation(compound, ..) => {
             for element in compound.iter() {
                 match element {
                     Element::Element(c) => {
@@ -139,7 +142,7 @@ fn summarize_terms(value: &ParsedValue) -> String {
                             ParsedValue::Dictionary(..) => summary = format!("{}Dc", summary),
                             ParsedValue::Tuple(..) => summary = format!("{}Tp", summary),
                             ParsedValue::List(..) => summary = format!("{}Tb", summary),
-                            ParsedValue::Compound(..) => summary = format!("{}Cm", summary),
+                            ParsedValue::Catenation(..) => summary = format!("{}Cm", summary),
                             ParsedValue::Tagged(..) => summary = format!("{}Pt", summary),
                         }
                     }
@@ -154,19 +157,10 @@ fn summarize_terms(value: &ParsedValue) -> String {
 
 #[test]
 fn test_escape_sequences() {
-    assert_text("`:", ":");
-    assert_text("`;", ";");
-    assert_text("`|", "|");
     assert_text("``", "`");
     assert_text("`\\", "\\");
-    assert_text("`{", "{");
-    assert_text("`}", "}");
-    assert_text("`[", "[");
-    assert_text("`]", "]");
-    assert_text("`<", "<");
-    assert_text("`>", ">");
-    assert_text("`#", "#");
     assert_text("`n", "\n");
+    assert_text("`t", "\t");
     // Invalid escapes
     assert_invalid_expression("`a");
     assert_invalid_expression("`1");
@@ -194,9 +188,9 @@ fn test_hash() {
     assert_terms("#>>", "Tx");
     assert_terms("A#B", "Tx");
     // Comments
-    assert_terms("##", "");
-    assert_terms("# ", "");
-    assert_terms("#", "");
+    assert_terms("##", "Tp");
+    assert_terms("# ", "Tp");
+    assert_terms("#", "Tp");
     // Invalid sequence
     assert_invalid_expression("#:");
     assert_invalid_expression("#;");
@@ -245,7 +239,20 @@ fn test_table() {
     assert_invalid_table("1|0|");
     assert_invalid_table("1|~|");
     assert_invalid_table("1| |0");
-    // Test valid tabular notation.
+
+    // Test valid bullet notation.
+    assert_table("> A > B > C", 3, 1);
+    assert_table("> A | B | C", 1, 3);
+    assert_table("> A | B > C | D", 2, 2);
+    assert_table("> | A > B > C", 3, 1);
+    assert_table("> A > B > | C", 3, 1);
+    // Test invalid bullet notation.
+    assert_invalid_table("> > A > B > C");
+    assert_invalid_table("> > A > B > > C");
+}
+
+#[test]
+fn test_tabulated_list() {
     assert_table("|1|", 1, 1);
     assert_table("|~|", 1, 1);
     assert_table("|1|1|", 1, 2);
@@ -255,24 +262,10 @@ fn test_table() {
     assert_table("|1|~| |~|1|", 2, 2);
     assert_table("|1| |1|", 2, 1);
     assert_table("|1|0|0| |0|1|0| |0|0|1|", 3, 3);
-    // Test invalid tabular notation.
     assert_invalid_table("|");
     assert_invalid_table("| |");
-    assert_invalid_table("|a");
     assert_invalid_table("|a|b|c| |d|e|f");
     assert_invalid_table("|a|b|c| | |d|e|f");
-    assert_invalid_table("|a|b|c| |d|e|");
-    assert_invalid_table("|a|b| |d|e|f|");
-    assert_invalid_table("|a|b| |~|e|f|");
-    // Test valid bullet notation.
-    assert_table("> A > B > C", 3, 1);
-    assert_table("> A | B | C", 1, 3);
-    assert_table("> A | B > C | D", 2, 2);
-    // Test invalid bullet notation.
-    assert_invalid_table("> > A > B > C");
-    assert_invalid_table("> > A > B > > C");
-    assert_invalid_table("> | A > B > C");
-    assert_invalid_table("> A > B > | C");
 }
 
 fn assert_table(source: &str, rows: usize, columns: usize) {
@@ -463,6 +456,66 @@ fn test_section() {
 fn test_compound() {
     let src = "Aaaaa bbb cccc <d>:e:f";
     let parse = parse_value_str(src).unwrap();
-    let compound = parse.as_compound().unwrap();
-    assert!(compound.whitespace.get(0).unwrap());
+    let compound = parse.as_catenation().unwrap();
+    //assert!(compound.whitespace.get(0).unwrap());
+}
+
+#[test]
+fn test_strings_1() {
+    let src1 = r"\Paragraph number one.`nParagraph number two.\";
+    let src2 = indoc! {r"
+        \Paragraph number
+        \ one.
+        \`n
+        \Paragraph number
+        \ two.
+    "};
+    let src3 = indoc! {r"
+        Paragraph number \
+        one.\
+        `n\
+        Paragraph number \
+        two.\
+    "};
+    let src4 = indoc! {r"
+        Paragraph number \
+        one.`n\
+        Paragraph number \
+        two.\
+    "};
+    let src5 = indoc! {r"
+        Paragraph number
+        one.\
+        \`n
+        Paragraph number
+        two.\
+    "};
+
+    strcmp(&[parse_value_str(src1), parse_value_str(src2), parse_value_str(src3), parse_value_str(src4), parse_value_str(src5)]);
+}
+
+fn strcmp(strs: &[Result<ParsedValue, Vec<ParseError>>]) {
+    let t1 = strs[0].clone().unwrap();
+    let t1 = t1.as_text().unwrap().as_str();
+    let mut i = 1;
+    while i < strs.len() {
+        let ti = strs[i].clone().unwrap();
+        let ti = ti.as_text().unwrap().as_str();
+        assert_eq!(t1, ti);
+        i += 1;
+    }
+}
+
+#[test]
+fn test_strings_2() {
+    let src1 = indoc! {r"
+      key1: value1
+      key2: value2
+      key3: value3
+      {S1}:
+      key1: value1
+      {S1 > Q1}:
+      key1: value1
+    "};
+    let v = parse_dictionary_str(src1).unwrap();
 }

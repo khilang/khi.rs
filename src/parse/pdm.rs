@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::rc::Rc;
-use std::slice::Iter;
-use crate::{Attribute, AttributeValue, Compound, Dictionary, Element, List, Tagged, Text, Tuple, Value};
+use std::slice::{Iter, IterMut};
+use crate::{Attribute, AttributeValue, Catenation, Dictionary, Element, List, ParsedTupleElement, Tagged, Text, Tuple, Value};
 
 //// Position
 
@@ -25,7 +25,7 @@ pub enum ParsedValue {
     Tuple(ParsedTuple, Position, Position),
     Dictionary(ParsedDictionary, Position, Position),
     List(ParsedList, Position, Position),
-    Compound(ParsedCompound, Position, Position),
+    Catenation(ParsedCatenation, Position, Position),
     Nil(Position, Position),
 }
 
@@ -41,7 +41,17 @@ impl ParsedValue {
         } else if len == 1 {
             terms.pop().unwrap()
         } else {
-            ParsedValue::Compound(ParsedCompound { components: terms, whitespace }, from, to)
+            let mut components = vec![];
+            let mut i = 0;
+            while i < terms.len() - 1 {
+                components.push(Element::Element(terms[i].clone()));
+                if whitespace[i] {
+                    components.push(Element::Whitespace);
+                }
+                i += 1;
+            }
+            components.push(Element::Element(terms[i].clone())); // TODO No clone
+            ParsedValue::Catenation(ParsedCatenation { components }, from, to)
         }
     }
 
@@ -51,7 +61,7 @@ impl ParsedValue {
             ParsedValue::Text(.., from, _) => from,
             ParsedValue::Dictionary(.., from, _) => from,
             ParsedValue::List(.., from, _) => from,
-            ParsedValue::Compound(.., from, _) => from,
+            ParsedValue::Catenation(.., from, _) => from,
             ParsedValue::Tuple(.., from, _) => from,
             ParsedValue::Tagged(.., from, _) => from,
         }.clone()
@@ -63,54 +73,23 @@ impl ParsedValue {
             ParsedValue::Text(.., to) => to,
             ParsedValue::Dictionary(.., to) => to,
             ParsedValue::List(.., to) => to,
-            ParsedValue::Compound(.., to) => to,
+            ParsedValue::Catenation(.., to) => to,
             ParsedValue::Tuple(.., to) => to,
             ParsedValue::Tagged(.., to) => to,
         }.clone()
     }
 
-    pub fn from_tuple(mut values: Vec<ParsedValue>, from: Position, to: Position) -> Self {
-        let len = values.len();
-        if len == 0 {
-            ParsedValue::Tuple(ParsedTuple::Unit, from, to)
-        } else if len == 1 {
-            let value = values.remove(0);
-            if matches!(value, ParsedValue::Tuple(..)) {
-                ParsedValue::Tuple(ParsedTuple::Single(Box::new(value)), from, to)
-            } else {
-                value
-            }
-        } else {
-            ParsedValue::Tuple(ParsedTuple::Multiple(values.into_boxed_slice()), from, to)
-        }
-    }
-
     pub fn is_unit(&self) -> bool {
-        matches!(self, ParsedValue::Tuple(ParsedTuple::Unit, ..))
-    }
-
-    fn elements_as_tuple(&self) -> Vec<&ParsedValue> {
-        match self {
-            ParsedValue::Tuple(t, _, _) => {
-                match t {
-                    ParsedTuple::Unit => vec![],
-                    ParsedTuple::Single(v) => vec![v],
-                    ParsedTuple::Multiple(vs) => {
-                        let mut r = vec![];
-                        for v in vs.iter() {
-                            r.push(v);
-                        }
-                        r
-                    },
-                }
-            }
-            v => vec![v],
+        if let Some(tuple) = self.as_tuple() {
+            tuple.is_empty()
+        } else {
+            false
         }
     }
 
 }
 
-impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCompound, ParsedTuple, ParsedTaggedValue> for ParsedValue {
+impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCatenation, ParsedTuple, ParsedTaggedValue> for ParsedValue {
     fn is_text(&self) -> bool {
         matches!(self, ParsedValue::Text(..))
     }
@@ -131,8 +110,8 @@ impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCompound
         matches!(self, ParsedValue::List(..))
     }
 
-    fn is_compound(&self) -> bool {
-        matches!(self, ParsedValue::Compound(..))
+    fn is_catenation(&self) -> bool {
+        matches!(self, ParsedValue::Catenation(..))
     }
 
     fn is_nil(&self) -> bool {
@@ -179,8 +158,8 @@ impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCompound
         }
     }
 
-    fn as_compound(&self) -> Option<&ParsedCompound> {
-        if let ParsedValue::Compound(d, ..) = self {
+    fn as_catenation(&self) -> Option<&ParsedCatenation> {
+        if let ParsedValue::Catenation(d, ..) = self {
             Some(d)
         } else {
             None
@@ -227,19 +206,19 @@ impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCompound
         }
     }
 
-    fn as_mut_compound(&mut self) -> Option<&mut ParsedCompound> {
-        if let ParsedValue::Compound(d, ..) = self {
+    fn as_mut_catenation(&mut self) -> Option<&mut ParsedCatenation> {
+        if let ParsedValue::Catenation(d, ..) = self {
             Some(d)
         } else {
             None
         }
     }
 
-    fn iter_as_tuple<'b> (&'b self) -> impl Iterator<Item=&'b ParsedValue> where Self: 'b {
+    fn iter_as_tuple<'b> (&'b self) -> impl Iterator<Item=ParsedTupleElement<'b, &'b ParsedValue>> where Self: 'b {
         if let ParsedValue::Tuple(tuple, ..) = self {
-            tuple.iter()
+            AsTupleIter::of_tuple(tuple)
         } else {
-            TupleIterator::Single(false, self)
+            AsTupleIter::of_value(self)
         }
     }
 
@@ -252,6 +231,50 @@ impl Value<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCompound
 
 }
 
+enum AsTupleIter<'a> {
+    Value(bool, &'a ParsedValue),
+    Tuple(TupleIterator<'a>),
+}
+
+impl<'a> AsTupleIter<'a> {
+    fn of_value(value: &'a ParsedValue) -> Self {
+        Self::Value(false, value)
+    }
+    fn of_tuple(tuple: &'a ParsedTuple) -> Self {
+        Self::Tuple(TupleIterator(tuple.0.iter()))
+    }
+}
+
+impl<'a> Iterator for AsTupleIter<'a> {
+    type Item = ParsedTupleElement<'a, &'a ParsedValue>;
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            AsTupleIter::Value(done, value) => {
+                if *done {
+                    None
+                } else {
+                    *done = true;
+                    Some(ParsedTupleElement::Element(value))
+                }
+            }
+            AsTupleIter::Tuple(iter) => {
+                if let Some(t) = iter.next() {
+                    match t {
+                        ParsedTupleElement::Element(e) => {
+                            Some(ParsedTupleElement::Element(e))
+                        }
+                        ParsedTupleElement::NamedElement(k, v) => {
+                            Some(ParsedTupleElement::NamedElement(k.clone(), v))
+                        }
+                    }
+                } else {
+                    None
+                }
+            },
+        }
+    }   
+}
+
 //// Text
 
 #[derive(PartialEq, Eq, Clone)]
@@ -260,7 +283,7 @@ pub struct ParsedText {
     pub escapes: Vec<bool>,
 }
 
-impl Text<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCompound, ParsedTuple, ParsedTaggedValue> for ParsedText {
+impl Text<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCatenation, ParsedTuple, ParsedTaggedValue> for ParsedText {
     fn as_str(&self) -> &str {
         &self.str
     }
@@ -273,10 +296,10 @@ impl Text<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCompound,
 pub struct ParsedTaggedValue {
     pub name: Rc<str>,
     pub attributes: Vec<ParsedAttribute>,
-    pub value: Box<ParsedValue>,
+    pub tuple: ParsedTuple,
 }
 
-impl Tagged<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCompound, ParsedTuple, Self> for ParsedTaggedValue {
+impl Tagged<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCatenation, ParsedTuple, Self> for ParsedTaggedValue {
     type AttributeIterator<'b> = AttributeIterator<'b>;
 
     fn name(&self) -> &str {
@@ -291,8 +314,8 @@ impl Tagged<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCompoun
         for attribute in &self.attributes {
             if key.eq(attribute.key().deref()) {
                 return match attribute {
-                    ParsedAttribute(_, Some(v)) => Some(AttributeValue(Some(&v))),
-                    ParsedAttribute(_, None) => Some(AttributeValue(None)),
+                    ParsedAttribute::Flag(_) => Some(AttributeValue::Flag),
+                    ParsedAttribute::Valued(_, v) => Some(AttributeValue::Value(v.as_ref())),
                 };
             }
         }
@@ -302,8 +325,8 @@ impl Tagged<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCompoun
     fn get_attribute_at(&self, index: usize) -> Option<Attribute<'_>> {
         if let Some(attribute) = self.attributes.get(index) {
             match attribute {
-                ParsedAttribute(k, Some(v)) => Some(Attribute(&k, Some(&v))),
-                ParsedAttribute(k, None) => Some(Attribute(&k, None)),
+                ParsedAttribute::Flag(k) => Some(Attribute(&k, None)),
+                ParsedAttribute::Valued(k, v) => Some(Attribute(&k, Some(&v))),
             }
         } else {
             None
@@ -314,17 +337,23 @@ impl Tagged<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCompoun
         AttributeIterator { iter: self.attributes.iter() }
     }
 
-    fn get(&self) -> &ParsedValue {
-        &self.value
+    fn get(&self) -> &ParsedTuple {
+        &self.tuple
     }
 }
 
 #[derive(Clone)]
-pub struct ParsedAttribute(pub Rc<str>, pub Option<Rc<str>>);
+pub enum ParsedAttribute {
+    Flag(Rc<str>),
+    Valued(Rc<str>, Rc<str>),
+}
 
 impl ParsedAttribute {
     fn key(&self) -> Rc<str> {
-        self.0.clone()
+        match self {
+            ParsedAttribute::Flag(key) | ParsedAttribute::Valued(key, ..) => key.clone(),
+        }
+        
     }
 }
 
@@ -336,11 +365,14 @@ impl<'a> Iterator for AttributeIterator<'a> {
     type Item = Attribute<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(ParsedAttribute(key, value)) = self.iter.next() {
-            if let Some(value) = value {
-                Some(Attribute(key, Some(value)))
-            } else {
-                Some(Attribute(key, None))
+        if let Some(a) = self.iter.next() {
+            match a {
+                ParsedAttribute::Flag(key) => {
+                    Some(Attribute(key, None))
+                }
+                ParsedAttribute::Valued(key, value) => {
+                    Some(Attribute(key, Some(value)))
+                }
             }
         } else {
             None
@@ -350,75 +382,89 @@ impl<'a> Iterator for AttributeIterator<'a> {
 
 //// Tuple
 
-/// A parsed tuple.
 #[derive(Clone)]
-pub enum ParsedTuple {
-    Unit,
-    Single(Box<ParsedValue>), // Value must be a ParsedTuple
-    Multiple(Box<[ParsedValue]>),
+pub enum TupleElement {
+    Value(ParsedValue),
+    Named(Rc<str>, ParsedValue),
 }
 
-impl Tuple<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCompound, Self, ParsedTaggedValue> for ParsedTuple {
+/// A parsed tuple.
+#[derive(Clone)]
+pub struct ParsedTuple(pub(crate) Vec<TupleElement>);
+
+impl Tuple<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCatenation, Self, ParsedTaggedValue> for ParsedTuple {
     type TupleIterator<'b> = TupleIterator<'b>;
+    type TupleIteratorMut<'b> = TupleIteratorMut<'b>;
 
     fn len(&self) -> usize {
-        match self {
-            ParsedTuple::Unit => 0,
-            ParsedTuple::Single(_) => 1,
-            ParsedTuple::Multiple(m) => m.len(),
-        }
+        self.0.len()
     }
 
     fn is_empty(&self) -> bool {
-        matches!(self, ParsedTuple::Unit)
+        self.0.is_empty()
     }
 
-    fn get(&self, index: usize) -> Option<&ParsedValue> {
-        match self {
-            ParsedTuple::Unit => None,
-            ParsedTuple::Single(v) => {
-                Some(v.as_ref())
+    fn get(&self, index: usize) -> Option<ParsedTupleElement<&ParsedValue>> {
+        if let Some(e) = self.0.get(index) {
+            match e {
+                TupleElement::Value(v) => Some(ParsedTupleElement::Element(v)),
+                TupleElement::Named(k, v) => Some(ParsedTupleElement::NamedElement(k.as_ref(), v)),
             }
-            ParsedTuple::Multiple(m) => {
-                m.get(index)
+        } else {
+            None
+        }
+    }
+
+    fn get_mut(&mut self, index: usize) -> Option<ParsedTupleElement<&mut ParsedValue>> {
+        if let Some(e) = self.0.get_mut(index) {
+            match e {
+                TupleElement::Value(v) => Some(ParsedTupleElement::Element(v)),
+                TupleElement::Named(k, v) => Some(ParsedTupleElement::NamedElement(k, v)),
             }
+        } else {
+            None
         }
     }
 
     fn iter(&self) -> Self::TupleIterator<'_> {
-        match self {
-            ParsedTuple::Unit => TupleIterator::Unit,
-            ParsedTuple::Single(v) => TupleIterator::Single(false, v),
-            ParsedTuple::Multiple(m) => TupleIterator::Multiple(0, m.as_ref()),
+        TupleIterator(self.0.iter())
+    }
+
+    fn iter_mut(&mut self) -> Self::TupleIteratorMut<'_> {
+        TupleIteratorMut(self.0.iter_mut())
+    }
+}
+
+pub struct TupleIterator<'a>(Iter<'a, TupleElement>);
+
+impl<'a> Iterator for TupleIterator<'a> {
+    type Item = ParsedTupleElement<'a, &'a ParsedValue>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(e) = self.0.next() {
+            match e {
+                TupleElement::Value(v) => Some(ParsedTupleElement::Element(v)),
+                TupleElement::Named(k, v) => Some(ParsedTupleElement::NamedElement(k, v)),
+            }
+        } else {
+            None
         }
     }
 }
 
-pub enum TupleIterator<'a> {
-    Unit,
-    Single(bool, &'a ParsedValue),
-    Multiple(usize, &'a [ParsedValue]),
-}
+pub struct TupleIteratorMut<'a>(IterMut<'a, TupleElement>);
 
-impl<'a> Iterator for TupleIterator<'a> {
-    type Item = &'a ParsedValue;
+impl<'a> Iterator for TupleIteratorMut<'a> {
+    type Item = ParsedTupleElement<'a, &'a mut ParsedValue>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            TupleIterator::Unit => None,
-            TupleIterator::Single(done, v) => {
-                if *done {
-                    None
-                } else {
-                    *done = true;
-                    Some(v)
-                }
+        if let Some(e) = self.0.next() {
+            match e {
+                TupleElement::Value(v) => Some(ParsedTupleElement::Element(v)),
+                TupleElement::Named(k, v) => Some(ParsedTupleElement::NamedElement(k, v)),
             }
-            TupleIterator::Multiple(index, v) => {
-                let v = v.get(*index);
-                *index += 1;
-                v
-            }
+        } else {
+            None
         }
     }
 }
@@ -437,8 +483,9 @@ impl ParsedDictionary {
     }
 }
 
-impl Dictionary<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCompound, ParsedTuple, ParsedTaggedValue> for ParsedDictionary {
+impl Dictionary<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCatenation, ParsedTuple, ParsedTaggedValue> for ParsedDictionary {
     type EntryIterator<'b> = EntryIterator<'b>;
+    type EntryIteratorMut<'b> = EntryIteratorMut<'b>;
 
     fn len(&self) -> usize {
         self.entries.len()
@@ -467,12 +514,30 @@ impl Dictionary<ParsedValue, ParsedText, ParsedDictionary, ParsedList, ParsedCom
     fn iter(&self) -> Self::EntryIterator<'_> {
         EntryIterator(self.entries.iter())
     }
+
+    fn iter_mut(&mut self) -> Self::EntryIteratorMut<'_> {
+        EntryIteratorMut(self.entries.iter_mut())
+    }
 }
 
 pub struct EntryIterator<'a>(std::collections::hash_map::Iter<'a, Rc<str>, ParsedValue>);
 
 impl<'a> Iterator for EntryIterator<'a> {
     type Item = (&'a str, &'a ParsedValue);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some((s, v)) = self.0.next() {
+            Some((s.as_ref(), v))
+        } else {
+            None
+        }
+    }
+}
+
+pub struct EntryIteratorMut<'a>(std::collections::hash_map::IterMut<'a, Rc<str>, ParsedValue>);
+
+impl<'a> Iterator for EntryIteratorMut<'a> {
+    type Item = (&'a str, &'a mut ParsedValue);
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some((s, v)) = self.0.next() {
@@ -498,8 +563,9 @@ impl ParsedList {
     }
 }
 
-impl List<ParsedValue, ParsedText, ParsedDictionary, Self, ParsedCompound, ParsedTuple, ParsedTaggedValue> for ParsedList {
+impl List<ParsedValue, ParsedText, ParsedDictionary, Self, ParsedCatenation, ParsedTuple, ParsedTaggedValue> for ParsedList {
     type ListIterator<'b> = Iter<'b, ParsedValue>;
+    type ListIteratorMut<'b> = IterMut<'b, ParsedValue>;
 
     fn len(&self) -> usize {
         self.elements.len()
@@ -509,43 +575,54 @@ impl List<ParsedValue, ParsedText, ParsedDictionary, Self, ParsedCompound, Parse
         self.elements.is_empty()
     }
 
-    fn get_element(&self, index: usize) -> Option<&ParsedValue> {
+    fn get(&self, index: usize) -> Option<&ParsedValue> {
         self.elements.get(index)
+    }
+
+    fn get_mut(&mut self, index: usize) -> Option<&mut ParsedValue> {
+        self.elements.get_mut(index)
     }
 
     fn iter(&self) -> Self::ListIterator<'_> {
         self.elements.iter()
     }
+
+    fn iter_mut(&mut self) -> Self::ListIteratorMut<'_> {
+        self.elements.iter_mut()
+    }
 }
 
-//// Compound
+//// Catenation
 
 #[derive(Clone)]
-pub struct ParsedCompound {
-    pub components: Vec<ParsedValue>, // Todo reorganize
-    pub whitespace: Vec<bool>,
+pub struct ParsedCatenation {
+    pub components: Vec<Element<ParsedValue>>, // Todo reorganize
 }
 
-impl ParsedCompound {}
+impl ParsedCatenation {}
 
-impl Compound<ParsedValue, ParsedText, ParsedDictionary, ParsedList, Self, ParsedTuple, ParsedTaggedValue> for ParsedCompound {
-    type ElementIterator<'b> = ElementIterator<'b>;
+impl Catenation<ParsedValue, ParsedText, ParsedDictionary, ParsedList, Self, ParsedTuple, ParsedTaggedValue> for ParsedCatenation {
+    type ElementIterator<'b> = Iter<'b, Element<ParsedValue>>;
+    type ElementIteratorMut<'b> = IterMut<'b, Element<ParsedValue>>;
 
     fn len(&self) -> usize {
-        self.components.len() + self.whitespace.len()
+        self.components.len()
     }
 
-    fn get(&self, _index: usize) -> Option<Element<&ParsedValue>> {
-        todo!()
+    fn get(&self, index: usize) -> Option<&Element<ParsedValue>> {
+        self.components.get(index)
+    }
+
+    fn get_mut(&mut self, index: usize) -> Option<&mut Element<ParsedValue>> {
+        self.components.get_mut(index)
     }
 
     fn iter(&self) -> Self::ElementIterator<'_> {
-        ElementIterator {
-            components: &self.components,
-            whitespace: &self.whitespace,
-            index: 0,
-            after_component: false,
-        }
+        self.components.iter()
+    }
+
+    fn iter_mut(&mut self) -> Self::ElementIteratorMut<'_> {
+        self.components.iter_mut()
     }
 }
 

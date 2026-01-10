@@ -11,11 +11,11 @@
 // tokens. In the final stage the parser operates on these reduced tokens to
 // create a parsed document model (AST).
 
-use std::collections::{HashSet};
-use crate::lex::{lex, LexError};
-use crate::parse::parser::{ParseError, Parser};
-use crate::parse::reducer::{Reduced, ReduceError, Reducer};
-use crate::pdm::{ParsedDictionary, ParsedList, ParsedValue, Position};
+use std::collections::HashSet;
+use crate::parse::lex::{lex, LexError};
+use crate::parse::parse::parser::{ParseError, Parser};
+use crate::parse::parse::reducer::{ReduceError, Reduced, Reducer};
+use crate::parse::pdm::{ParsedDictionary, ParsedList, ParsedValue, Position};
 
 const MAX_DEPTH: usize = 256; //TODO
 
@@ -120,9 +120,9 @@ pub mod parser {
     use std::rc::Rc;
     use std::slice::Iter;
     use std::vec;
-    use crate::{Dictionary, Value};
-    use crate::parse::reducer::{Reduced, ScopeType, StringType};
-    use crate::pdm::{ParsedAttribute, ParsedDictionary, ParsedList, ParsedTaggedValue, ParsedText, ParsedTuple, ParsedValue, Position};
+    use crate::{ParsedTupleElement, Value};
+    use crate::parse::parse::reducer::{Reduced, ScopeType, StringType};
+    use crate::parse::pdm::{ParsedAttribute, ParsedDictionary, ParsedList, ParsedTaggedValue, ParsedText, ParsedTuple, ParsedValue, Position, TupleElement, TupleIterator};
 
     pub struct Parser<'a> {
         stream: Iter<'a, Reduced>,
@@ -197,12 +197,12 @@ pub mod parser {
         ///                  | *<value>*
         /// ```
         pub(crate) fn parse_value_document(&mut self) -> Result<ParsedValue, ParseError> {
-            let value = if matches!(self.t0, Reduced::String(..) | Reduced::CurlyBracket(..) | Reduced::SquareBracket(..) | Reduced::AngleBracket(..) | Reduced::Tilde(..) | Reduced::Bar(..) | Reduced::TaggedValueHeader(..)) {
-                self.parse_value()?
+            if !matches!(self.t0, Reduced::End(..)) {
+                let (value, _is_tuple) = self.parse_value()?;
+                Ok(value)
             } else {
-                ParsedValue::Tuple(ParsedTuple::Unit, self.t0.at(), self.t1.at())
-            };
-            Ok(value)
+                Ok(ParsedValue::Tuple(ParsedTuple(vec![]), self.t0.at(), self.t1.at()))
+            }
         }
 
         /// Parse a dictionary document.
@@ -237,42 +237,86 @@ pub mod parser {
 
         /// Parse a value.
         ///
+        /// Returns a true bool if a tuple matches.
+        ///
         /// ```text
-        /// <value> → <inner-value>
-        ///         | "|" <inner-value>
-        ///         | <tagged-value>
+        /// <value> → <catenation>
+        ///         | <delimited-tuple>
+        ///         | <prefixed-tuple>
+        ///         | <prefixed-tagged-value>
+        ///
+        /// <delimited-tuple>  → <catenation> <delimited-tuple'>
+        ///                    | <delimited-tuple'>
+        /// <delimited-tuple'> → "|" <tuple-element>
+        ///                    | "|" <tuple-element> <delimited-tuple'>
         /// ```
-        fn parse_value(&mut self) -> Result<ParsedValue, ParseError> {
+        fn parse_value(&mut self) -> Result<(ParsedValue, bool), ParseError> {
+            let from = self.at();
+            if matches!(self.t0, Reduced::TaggedValueHeader(..)) {
+                return Ok((self.parse_tagged_value()?, false));
+            }
+            let mut elements = vec![];
             match self.t0 {
-                Reduced::String(..) | Reduced::CurlyBracket(..) | Reduced::SquareBracket(..) | Reduced::AngleBracket(..) | Reduced::Tilde(..) => self.parse_inner_value(),
+                Reduced::String(..) | Reduced::CurlyBracket(..) | Reduced::SquareBracket(..) | Reduced::AngleBracket(..) | Reduced::Tilde(..) => {
+                    let element = self.parse_catenation()?;
+                    if !matches!(self.t0, Reduced::Bar(..)) || !matches!(self.t1, Reduced::String(..) | Reduced::CurlyBracket(..) | Reduced::SquareBracket(..) | Reduced::AngleBracket(..) | Reduced::Tilde(..) | Reduced::Colon(..)) {
+                        return Ok((element, false));
+                    }
+                    elements.push(TupleElement::Value(element));
+                    self.shift();
+                },
+                Reduced::Colon(..) => {}
                 Reduced::Bar(..) => {
                     self.shift();
-                    self.parse_inner_value()
                 }
-                Reduced::TaggedValueHeader(..) => self.parse_tagged_value(),
-                _ => return ParseError::token_expectation_error(&[Rule::InnerValue, Rule::BarredInnerValue, Rule::TaggedValue], self.t0, Rule::Value, self.t0.at()),
+                _ => return ParseError::token_expectation_error(&[Rule::Catenation, Rule::Tuple, Rule::TaggedValue], self.t0, Rule::Value, self.t0.at()),
             }
+            loop {
+                let element = if matches!(self.t0, Reduced::Colon(..)) && matches!(self.t1, Reduced::String(..)) {
+                    self.require_no_whitespace_after();
+                    self.shift();
+                    let key = self.parse_string()?;
+                    let value = self.parse_catenation()?;
+                    TupleElement::Named(key, value)
+                } else {
+                    TupleElement::Value(self.parse_catenation()?)
+                };
+                elements.push(element);
+                if !matches!(self.t0, Reduced::Bar(..)) || !matches!(self.t1, Reduced::String(..) | Reduced::CurlyBracket(..) | Reduced::SquareBracket(..) | Reduced::AngleBracket(..) | Reduced::Tilde(..) | Reduced::Colon(..)) {
+                    break;
+                }
+                self.shift();
+            }
+            let to = self.at();
+            Ok((ParsedValue::Tuple(ParsedTuple(elements), from, to), true))
         }
 
-        /// Parse a block.
+        /// Parse a catenation.
         ///
         /// ```text
-        /// <block> → <term>
-        ///         | <term> <block>
-        ///         | "~"
-        ///         | "~" <block>
+        /// <catenation> → <term>
+        ///              | <term> <catenation>
+        ///              | "~"
+        ///              | "~" <catenation>
+        /// ```
+        /// `<term>` takes precedence over `<catenation>` on ambiguity, which can occur
+        /// with `~` when `<term>` matches `<text>`.
         ///
+        /// ```text
         /// <term> → <text>
         ///        | <bracketed-value>
         ///        | <bracketed-dictionary>
         ///        | <bracketed-list>
         ///        | <tagged-arguments>
         /// ```
-        fn parse_block(&mut self) -> Result<ParsedValue, ParseError> {
+        fn parse_catenation(&mut self) -> Result<ParsedValue, ParseError> {
             let mut terms: Vec<ParsedValue> = vec![];
             let mut whitespace = vec![];
             let from = self.at();
             let mut space_before = false;
+            if !matches!(self.t0, Reduced::String(..) | Reduced::CurlyBracket(..) | Reduced::SquareBracket(..) | Reduced::AngleBracket(..) | Reduced::Tilde(..)) {
+                return ParseError::token_expectation_error(&[Rule::String, Rule::BracketedDictionary, Rule::BracketedValue, Rule::BracketedList, Rule::TaggedArguments, Rule::Tilde], self.t0, Rule::Catenation, self.t0.at());
+            }
             loop {
                 space_before = self.whitespace_before;
                 match self.t0 {
@@ -281,11 +325,11 @@ pub mod parser {
                         push_term(&mut terms, &mut whitespace, text, space_before);
                     }
                     Reduced::CurlyBracket(..) => {
-                        let value = self.parse_bracketed_construct()?;
+                        let value = self.parse_curly_bracket()?;
                         push_term(&mut terms, &mut whitespace, value, space_before);
                     }
                     Reduced::SquareBracket(..) => {
-                        let value = self.parse_bracketed_list()?;
+                        let value = self.parse_list_bracket()?;
                         push_term(&mut terms, &mut whitespace, value, space_before);
                     },
                     Reduced::AngleBracket(..) => {
@@ -358,67 +402,6 @@ pub mod parser {
             Ok(ParsedValue::Text(text, from, to))
         }
 
-        /// Parse an inner value.
-        ///
-        /// ```text
-        /// <inner-value> → <tuple-element>
-        ///               | <tuple>
-        ///
-        /// <tuple> → <tuple-element> "|" <tuple-element>
-        ///         | <tuple-element> "|" <tuple>
-        ///
-        /// <tuple-element> → <block>
-        ///                 | <mapped-key>
-        /// ```
-        fn parse_inner_value(&mut self) -> Result<ParsedValue, ParseError> {
-            let mut elements = vec![];
-            let mut mapped_keys = vec![];
-            let from = self.at();
-            loop {
-                if !matches!(self.t0, Reduced::String(..) | Reduced::AssignmentHeader(..)) || !matches!(self.t1, Reduced::Colon(..) | Reduced::MapArrow(..)) {
-                    let element = self.parse_block()?;
-                    elements.push(element);
-                } else {
-                    let mapped_key = self.parse_mapped_key()?;
-                    mapped_keys.push(mapped_key);
-                }
-                if !matches!(self.t0, Reduced::Bar(..)) || !matches!(self.t1, Reduced::String(..) | Reduced::AssignmentHeader(..) | Reduced::CurlyBracket(..) | Reduced::SquareBracket(..) | Reduced::AngleBracket(..) | Reduced::Tilde(..)) {
-                    break;
-                }
-                self.shift();
-            }
-            let to = self.at_last();
-            if !mapped_keys.is_empty() {
-                let dictionary = create_dictionary(vec![(vec![], mapped_keys)], &mut self.errors, from, to);
-                elements.insert(0, ParsedValue::Dictionary(dictionary, from, to));
-            }
-            let inner_value = if elements.len() == 1 {
-                elements.pop().unwrap()
-            } else {
-                ParsedValue::Tuple(ParsedTuple::Multiple(elements.into_boxed_slice()), from, to)
-            };
-            Ok(inner_value)
-        }
-
-        /// Parse a mapped key.
-        ///
-        /// ```text
-        /// <mapped-key> → <key> "=>" <block>
-        /// ```
-        fn parse_mapped_key(&mut self) -> Result<(ParsedKey, ParsedValue), ParseError> {
-            let from = self.t0.at();
-            if !matches!(self.t0, Reduced::AssignmentHeader(..) | Reduced::String(..)) {
-                return ParseError::token_expectation_error(&[Rule::Key], self.t0, Rule::MappedKey, from);
-            }
-            let key = self.parse_key()?;
-            if !matches!(self.t0, Reduced::MapArrow(..)) {
-                return ParseError::token_expectation_error(&[Rule::MapArrow], self.t0, Rule::MappedKey, from);
-            }
-            self.shift();
-            let value = self.parse_block()?;
-            Ok((key, value))
-        }
-
         /// Parse a tagged value.
         ///
         /// ```text
@@ -432,21 +415,22 @@ pub mod parser {
             };
             self.require_whitespace_after();
             self.shift();
-            let value = self.parse_value()?;
+            let (value, is_tuple) = self.parse_value()?;
             let to = self.at();
+            let tuple = if !is_tuple { // Wrap in tuple if not tuple phrase.
+                ParsedTuple(vec![TupleElement::Value(value)])
+            } else {
+                match value {
+                    ParsedValue::Tuple(t, _, _) => t, _ => unreachable!(),
+                }
+            };
             let tagged_value = match tag {
                 Some((name, attributes)) => {
                     ParsedValue::Tagged(ParsedTaggedValue {
-                        name: self.store_str(&name), attributes, value: Box::new(value),
+                        name: self.store_str(&name), attributes, tuple,
                     }, from, to)
                 }
-                None => {
-                    if value.is_tuple() {
-                        ParsedValue::Tuple(ParsedTuple::Single(Box::new(value)), from, to)
-                    } else {
-                        value
-                    }
-                }
+                None => ParsedValue::Tuple(tuple, from, to),
             };
             Ok(tagged_value)
         }
@@ -456,25 +440,25 @@ pub mod parser {
         /// ```text
         /// <dictionary> → <delimited-dictionary>
         ///              | <aligned-dictionary>
-        ///              | <absolute-dictionary>
+        ///              | <sectioned-dictionary>
         ///
-        /// <absolute-dictionary>  → <absolute-dictionary'>
-        ///                        | <inner-dictionary>_<absolute-dictionary'>
-        /// <absolute-dictionary'> → <section>
-        ///                        | <section>_<absolute-dictionary>
+        /// <sectioned-dictionary>  → <sectioned-dictionary'>
+        ///                         | <regular-dictionary>_<sectioned-dictionary'>
+        /// <sectioned-dictionary'> → <section>
+        ///                         | <section>_<sectioned-dictionary>
         ///
-        /// <section> → <square-header>":"
-        ///           | <square-header>":"_<list>
-        ///           | <curly-header>":"
-        ///           | <curly-header>":"_<inner-dictionary>
-        ///           | <curly-header>":"_<value>
+        /// <section> → <value-header>_<value>
+        ///           | <dictionary-header>
+        ///           | <dictionary-header>_<regular-dictionary>
+        ///           | <list-header>
+        ///           | <list-header>_<list>
         /// ```
         fn parse_dictionary(&mut self) -> Result<ParsedDictionary, ParseError> {
             let mut dictionary_sections = vec![];
             let mut direct_entries = vec![];
             let from = self.at();
             if matches!(self.t0, Reduced::AssignmentHeader(..)) {
-                let mut entries = self.parse_inner_dictionary()?;
+                let mut entries = self.parse_regular_dictionary()?;
                 direct_entries.append(&mut entries);
             }
             loop {
@@ -490,11 +474,11 @@ pub mod parser {
                         let content_from = self.at();
                         match self.t0 {
                             Reduced::String(..) | Reduced::CurlyBracket(..) | Reduced::SquareBracket(..) | Reduced::AngleBracket(..) | Reduced::Tilde(..) | Reduced::Bar(..) | Reduced::TaggedValueHeader(..) => {
-                                let value = self.parse_value()?;
+                                let (value, _is_tuple) = self.parse_value()?;
                                 direct_entries.push((header, value));
                             }
                             Reduced::AssignmentHeader(..) => {
-                                let entries = self.parse_inner_dictionary()?;
+                                let entries = self.parse_regular_dictionary()?;
                                 dictionary_sections.push((header, entries))
                             }
                             _ => direct_entries.push((header, ParsedValue::Dictionary(ParsedDictionary::empty(), content_from, content_from))),
@@ -529,33 +513,60 @@ pub mod parser {
         /// Parse a dictionary header.
         ///
         /// ```text
-        /// <curly-header> → "{"<key>"}"
+        /// <value-header> → "{"<header-key>"}"":"
         ///
-        /// <square-header> → "["<key>"]"
+        /// <dictionary-header> → "{"<header-key>"}"":"
+        ///
+        /// <list-header> → "["<header-key>"]"":"
         /// ```
         fn parse_header(&mut self) -> Result<ParsedKey, ParseError> {
-            let mut key = vec![];
+            let mut segmented_key = vec![];
             let at = self.at();
             match self.t0 {
                 Reduced::CurlyHeader(_, ht, fw, scope) | Reduced::SquareHeader(_, ht, fw, scope) => {
                     self.shift();
                     let mut parser = Parser::new(&scope, self.strings, self.errors, *fw, *ht);
                     parser.require_no_whitespace_before();
-                    key = parser.parse_key()?;
+                    segmented_key = parser.parse_header_key()?;
                     parser.require_end();
                 }
                 _ => return ParseError::token_expectation_error(&[Rule::Key], self.t0, Rule::Header, at),
             }
+            Ok(segmented_key)
+        }
+
+        /// Parse a header key.
+        ///
+        /// ```text
+        /// <header-key> → <key>
+        ///              | <key> ">" <header-key>
+        /// ```
+        fn parse_header_key(&mut self) -> Result<Vec<Rc<str>>, ParseError> {
+            let mut key = vec![];
+            loop {
+                match self.t0 {
+                    Reduced::String(.., s, _) | Reduced::AssignmentHeader(.., s) => {
+                        let k = self.store_str(s);
+                        key.push(k);
+                    }
+                    _ => return ParseError::token_expectation_error(&[Rule::String], self.t0, Rule::Key, self.t0.at())
+                }
+                self.shift();
+                if !matches!(self.t0, Reduced::Bullet(..)) {
+                    break;
+                }
+                self.shift();
+            }
             Ok(key)
         }
 
-        /// Parse an inner dictionary.
+        /// Parse a regular dictionary.
         ///
         /// ```text
-        /// <inner-dictionary> → <delimited-dictionary>
-        ///                    | <aligned-dictionary>
+        /// <regular-dictionary> → <delimited-dictionary>
+        ///                      | <aligned-dictionary>
         /// ```
-        fn parse_inner_dictionary(&mut self) -> Result<Vec<ParsedEntry>, ParseError> {
+        fn parse_regular_dictionary(&mut self) -> Result<Vec<ParsedEntry>, ParseError> {
             let entry = self.parse_entry()?;
             let entries = match self.t0 {
                 Reduced::Semicolon(..) => {
@@ -619,10 +630,7 @@ pub mod parser {
         /// Parse an entry.
         ///
         /// ```text
-        /// <entry> → <key>":" <value>
-        ///
-        /// <key> → <string>
-        ///       | <string>":"<key>
+        /// <entry> → <key>":"_<value>
         /// ```
         fn parse_entry(&mut self) -> Result<ParsedEntry, ParseError> {
             let at = self.at();
@@ -632,7 +640,7 @@ pub mod parser {
                 //    return ParseError::token_expectation_error(&[Rule::Colon], self.t0, Rule::Key, at);
                 //}
                 //self.shift();
-                let value = self.parse_value()?;
+                let (value, _is_tuple) = self.parse_value()?;
                 Ok((key, value))
             } else {
                 return ParseError::token_expectation_error(&[Rule::Key], self.t0, Rule::Entry, at);
@@ -664,50 +672,26 @@ pub mod parser {
             Ok(key)
         }
 
-        /// Parse a key.
-        ///
-        /// ```text
-        /// <key> → <string>
-        ///       | <string>":"<key>
-        /// ```
-        fn parse_key(&mut self) -> Result<Vec<Rc<str>>, ParseError> {
-            let mut key = vec![];
-            loop {
-                match self.t0 {
-                    Reduced::String(.., s, _) | Reduced::AssignmentHeader(.., s) => {
-                        let k = self.store_str(s);
-                        key.push(k);
-                    }
-                    _ => return ParseError::token_expectation_error(&[Rule::String], self.t0, Rule::Key, self.t0.at())
-                }
-                self.shift();
-                if !matches!(self.t0, Reduced::Colon(..)) {
-                    break;
-                }
-                self.require_no_whitespace_before();
-                self.require_no_whitespace_after();
-                self.shift();
-            }
-            Ok(key)
-        }
-
         /// Parse a list.
         ///
         /// ```text
         /// <list> → <delimited-list>
-        ///        | <aligned-list>
-        ///        | <tabular-list>
-        ///        | <tagged-list>
+        ///        | <bulleted-list>
+        ///        | <tabulated-list>
+        ///        | <tag-list>
         /// ```
         fn parse_list(&mut self) -> Result<ParsedList, ParseError> {
             match self.t0 {
-                Reduced::Bullet(..) => self.parse_aligned_list(vec![]),
+                Reduced::Bullet(..) => self.parse_bulleted_list(vec![]),
                 Reduced::Bar(..) => {
-                    self.shift();
-                    let value = self.parse_inner_value()?;
+                    let (value, _) = self.parse_value()?;
                     if matches!(self.t0, Reduced::Bar(..)) {
                         self.shift();
-                        self.parse_tabular_list(vec![value])
+                        if matches!(self.t0, Reduced::Bar(..)) {
+                            self.parse_tabulated_list(vec![value])
+                        } else { // One row tabulated list.
+                            Ok(ParsedList { elements: vec![value] })
+                        }
                     } else if matches!(self.t0, Reduced::Semicolon(..)) {
                         self.shift();
                         self.parse_delimited_list(vec![value])
@@ -722,7 +706,7 @@ pub mod parser {
                 Reduced::TaggedValueHeader(..) => {
                     let value = self.parse_tagged_value()?;
                     if matches!(self.t0, Reduced::TaggedValueHeader(..)) {
-                        self.parse_tagged_list(vec![value])
+                        self.parse_tag_list(vec![value])
                     } else if matches!(self.t0, Reduced::Semicolon(..)) {
                         self.shift();
                         self.parse_delimited_list(vec![value])
@@ -744,7 +728,7 @@ pub mod parser {
         fn parse_delimited_list(&mut self, elements: Vec<ParsedValue>) -> Result<ParsedList, ParseError> {
             let mut elements = elements;
             loop {
-                let value = self.parse_value()?;
+                let (value, _is_tuple) = self.parse_value()?;
                 elements.push(value);
                 if !matches!(self.t0, Reduced::Semicolon(..)) {
                     break;
@@ -758,13 +742,13 @@ pub mod parser {
             Ok(list)
         }
 
-        /// Parse an aligned list.
+        /// Parse a bulleted list.
         ///
         /// ```text
-        /// <aligned-list> → ">"_<value>
-        ///                | ">"_<value>_<aligned-list>
+        /// <bulleted-list> → ">"_<value>
+        ///                 | ">"_<value>_<bulleted-list>
         /// ```
-        fn parse_aligned_list(&mut self, elements: Vec<ParsedValue>) -> Result<ParsedList, ParseError> {
+        fn parse_bulleted_list(&mut self, elements: Vec<ParsedValue>) -> Result<ParsedList, ParseError> {
             let mut elements = elements;
             let at = self.at(); // TODO: Might be earlier.
             if !matches!(self.t0, Reduced::Bullet(..)) {
@@ -773,7 +757,7 @@ pub mod parser {
             loop {
                 self.require_whitespace_after();
                 self.shift();
-                let value = self.parse_value()?;
+                let (value, _is_tuple) = self.parse_value()?;
                 elements.push(value);
                 if !matches!(self.t0, Reduced::Bullet(..)) {
                     break;
@@ -783,20 +767,19 @@ pub mod parser {
             Ok(ParsedList { elements })
         }
 
-        /// Parse a tabular list.
+        /// Parse a tabulated list.
         ///
         /// ```text
-        /// <tabular-list> → "|" <inner-value> "|"
-        ///                | "|" <inner-value> "|"_<tabular-list>
+        /// <tabulated-list> → <tuple'> "|"
+        ///                  | <tuple'> "|"_<tabulated-list>
         /// ```
-        fn parse_tabular_list(&mut self, elements: Vec<ParsedValue>) -> Result<ParsedList, ParseError> {
+        fn parse_tabulated_list(&mut self, elements: Vec<ParsedValue>) -> Result<ParsedList, ParseError> {
             let mut elements = elements;
             if !matches!(self.t0, Reduced::Bar(..)) {
                 return ParseError::token_expectation_error(&[Rule::Bar], self.t0, Rule::TabularList, self.t0.at());
             }
             loop {
-                self.shift();
-                let value = self.parse_inner_value()?;
+                let (value, _) = self.parse_value()?;
                 elements.push(value);
                 if !matches!(self.t0, Reduced::Bar(..)) {
                     return ParseError::token_expectation_error(&[Rule::Bar], self.t0, Rule::TabularList, self.t0.at());
@@ -809,13 +792,13 @@ pub mod parser {
             Ok(ParsedList { elements })
         }
 
-        /// Parse a tagged list.
+        /// Parse a tag list.
         ///
         /// ```text
-        /// <tagged-list> → <tagged-value>
-        ///               | <tagged-value>_<tagged-list>
+        /// <tag-list> → <tagged-value>
+        ///            | <tagged-value>_<tag-list>
         /// ```
-        fn parse_tagged_list(&mut self, elements: Vec<ParsedValue>) -> Result<ParsedList, ParseError> {
+        fn parse_tag_list(&mut self, elements: Vec<ParsedValue>) -> Result<ParsedList, ParseError> {
             let mut elements = elements;
             loop {
                 let value = self.parse_tagged_value()?;
@@ -836,32 +819,19 @@ pub mod parser {
         fn parse_tagged_arguments(&mut self) -> Result<ParsedValue, ParseError> {
             let from = self.at();
             let tag = self.parse_tag()?;
-            let mut arguments = if matches!(self.t0, Reduced::Colon(..)) {
+            let arguments = if matches!(self.t0, Reduced::Colon(..)) {
                 self.parse_arguments()?
             } else {
                 vec![]
             };
             let to = self.at();
-            let value = if arguments.len() == 0 {
-                ParsedValue::Tuple(ParsedTuple::Unit, from, to)
-            } else if arguments.len() == 1 {
-                let argument = arguments.pop().unwrap();
-                if argument.is_tuple() {
-                    ParsedValue::Tuple(ParsedTuple::Single(Box::new(argument)), from, to)
-                } else {
-                    argument
-                }
-            } else {
-                ParsedValue::Tuple(ParsedTuple::Multiple(arguments.into_boxed_slice()), from, to)
-            };
+            let tuple = ParsedTuple(arguments);
             let tagged_arguments = match tag {
                 Some((name, attributes)) => {
                     let name = self.store_str(&name);
-                    ParsedValue::Tagged(ParsedTaggedValue { name, attributes, value: Box::new(value) }, from, to)
+                    ParsedValue::Tagged(ParsedTaggedValue { name, attributes, tuple }, from, to)
                 }
-                None => {
-                    value
-                }
+                None => ParsedValue::Tuple(tuple, from, to),
             };
             Ok(tagged_arguments)
         }
@@ -871,14 +841,20 @@ pub mod parser {
         /// ```text
         /// <arguments> → ":"<argument>
         ///             | ":"<argument><arguments>
+        ///             | ":"<key>"="<argument>
+        ///             | ":"<key>"="<argument><arguments>
+        /// ```
+        /// `<argument>` takes precedence over `<arguments>` on ambiguity with
+        /// `<tagged-arguments>`.
         ///
+        /// ```text
         /// <argument> → <string>
         ///            | <bracketed-value>
         ///            | <bracketed-dictionary>
         ///            | <bracketed-list>
         ///            | <tagged-arguments>
         /// ```
-        fn parse_arguments(&mut self) -> Result<Vec<ParsedValue>, ParseError> {
+        fn parse_arguments(&mut self) -> Result<Vec<TupleElement>, ParseError> {
             let mut arguments = vec![];
             if !matches!(self.t0, Reduced::Colon(..)) {
                 return ParseError::token_expectation_error(&[Rule::Colon], self.t0, Rule::Arguments, self.t0.at());
@@ -887,25 +863,71 @@ pub mod parser {
                 self.require_no_whitespace_after();
                 self.shift();
                 match self.t0 {
-                    Reduced::String(.., s, escapes) => {
-                        let from = self.at();
-                        self.shift();
-                        let to = self.at();
-                        let str = self.store_str(s);
-                        let text = ParsedValue::Text(ParsedText { str, escapes: escapes.clone() }, from, to);
-                        arguments.push(text);
+                    Reduced::String(from, to, .., typ, s, escapes) => {
+                        if *typ == StringType::Word {
+                            self.shift();
+                            let split = s.split("=").collect::<Vec<&str>>();
+                            if split.len() == 1 {
+                                let to = self.at();
+                                let str = self.store_str(s);
+                                let text = ParsedValue::Text(ParsedText { str, escapes: escapes.clone() }, *from, to);
+                                arguments.push(TupleElement::Value(text));
+                            } else if split.len() == 2 {
+                                let key = split[0];
+                                let value = split[1];
+                                if key.is_empty() {
+                                    return Err(ParseError::ArgumentIllegalEquals(*from));
+                                }
+                                let key = self.store_str(key);
+                                if !value.is_empty() {
+                                    let str = self.store_str(&value);
+                                    let count = str.chars().count();
+                                    let escapes = vec![false; count];
+                                    let value = ParsedValue::Text(ParsedText {str, escapes}, *from, *to);
+                                    arguments.push(TupleElement::Named(key, value));
+                                } else {
+                                    match self.t0 {
+                                        Reduced::String(_, _, _, _, str, escapes) => {
+                                            let text = ParsedText{str: self.store_str(str), escapes: escapes.clone()};
+                                            let value = ParsedValue::Text(text, *from, *to);
+                                            arguments.push(TupleElement::Named(key, value));
+                                        }
+                                        Reduced::CurlyBracket(..) => {
+                                            let value = self.parse_curly_bracket()?;
+                                            arguments.push(TupleElement::Named(key, value));
+                                        }
+                                        Reduced::SquareBracket(..) => {
+                                            let list = self.parse_list_bracket()?;
+                                            arguments.push(TupleElement::Named(key, list));
+                                        }
+                                        Reduced::AngleBracket(..) => {
+                                            let argument = self.parse_tagged_arguments()?;
+                                            arguments.push(TupleElement::Named(key, argument));
+                                        }
+                                        _ => return Err(ParseError::ArgumentIllegalEquals(*from)),
+                                    }
+                                }
+                            } else {
+                                unimplemented!()
+                            }
+                        } else if *typ == StringType::Transcription {
+                            // TODO
+                            unimplemented!()
+                        } else {
+                            unimplemented!()
+                        }
                     }
                     Reduced::CurlyBracket(..) => {
-                        let value = self.parse_bracketed_construct()?;
-                        arguments.push(value);
+                        let value = self.parse_curly_bracket()?;
+                        arguments.push(TupleElement::Value(value));
                     }
                     Reduced::SquareBracket(..) => {
-                        let list = self.parse_bracketed_list()?;
-                        arguments.push(list);
+                        let list = self.parse_list_bracket()?;
+                        arguments.push(TupleElement::Value(list));
                     }
                     Reduced::AngleBracket(..) => {
                         let argument = self.parse_tagged_arguments()?;
-                        arguments.push(argument);
+                        arguments.push(TupleElement::Value(argument));
                         break;
                     }
                     _ => return ParseError::token_expectation_error(&[Rule::String, Rule::BracketedValue, Rule::BracketedDictionary, Rule::BracketedList, Rule::TaggedArguments], self.t0, Rule::Argument, self.t0.at()),
@@ -920,8 +942,8 @@ pub mod parser {
         /// Parse a tag.
         ///
         /// ```text
-        /// <tag> → "<"<word>">"
-        ///       | "<"<word>_<attributes> ">"
+        /// <tag> → "<"<key>">"
+        ///       | "<"<key>_<attributes> ">"
         ///       | "<"">"
         /// ```
         fn parse_tag(&mut self) -> Result<Option<(Rc<str>, Vec<ParsedAttribute>)>, ParseError> {
@@ -934,8 +956,8 @@ pub mod parser {
                 }
                 let name = match parser.t0 {
                     Reduced::String(from, _, _, t, name, _) | Reduced::AssignmentHeader(from, _, t, name) => {
-                        if *t != StringType::Word {
-                            parser.errors.push(ParseError::TagNameMustBeWord(*from, parser.t0.to_type()));
+                        if *t != StringType::Word && *t != StringType::Transcription {
+                            parser.errors.push(ParseError::TagNameMustBeKey(*from, parser.t0.to_type()));
                         }
                         parser.store_str(name)
                     }
@@ -959,38 +981,63 @@ pub mod parser {
         /// ```text
         /// <attributes> → <attribute>
         ///              | <attribute>_<attributes>
+        /// ```
         ///
-        /// <attribute> → <word>
-        ///             | <word>":"<string>
+        /// ```text
+        /// <attribute> → <key>
+        ///             | <key>"="<string>
         /// ```
         fn parse_attributes(&mut self) -> Result<Vec<ParsedAttribute>, ParseError> {
             let mut attributes = vec![];
-            if !matches!(self.t0, Reduced::AssignmentHeader(..) | Reduced::String(..)) {
+            if !matches!(self.t0, Reduced::String(..)) {
                 return ParseError::token_expectation_error(&[Rule::Attribute], self.t0, Rule::Attributes, self.at());
             }
             loop {
-                let key = match self.t0 {
-                    Reduced::String(_, _, _, t, key, _) | Reduced::AssignmentHeader(_, _, t, key) => {
-                        if *t != StringType::Word {
-                            return Err(ParseError::AttributeMustBeWord(self.at(), self.t0.to_type()));
+                let at = self.at();
+                let split = match self.t0 {
+                    Reduced::String(_, _, _, t, key, _) => {
+                        if *t == StringType::Word {
+                            let split = key.split("=").collect::<Vec<&str>>();
+                            self.shift();
+                            split
+                        } else if *t == StringType::Transcription {
+                            let mut split = vec![];
+                            split.push(key);
+
+                            let split = key.split("=").collect::<Vec<&str>>();
+                            self.shift();
+                            split
+                        } else {
+                            return Err(ParseError::AttributeMustBeKey(self.at(), self.t0.to_type()));
                         }
-                        self.store_str(key)
                     }
                     _ => break,
                 };
-                self.shift();
-                if matches!(self.t0, Reduced::Colon(..)) {
-                    self.shift();
-                    let value = self.parse_string()?;
-                    attributes.push(ParsedAttribute(key, Some(value)));
+                if split.len() == 1 {
+                    let key = split[0];
+                    attributes.push(ParsedAttribute::Flag(self.store_str(key)));
+                } else if split.len() == 2 {
+                    let key = split[0];
+                    let value = split[1];
+                    if key.is_empty() {
+                        return Err(ParseError::AttributeIllegalEquals(at));
+                    }
+                    let key = self.store_str(key);
+                    if value.is_empty() {
+                        let value = self.parse_string()?;
+                        attributes.push(ParsedAttribute::Valued(key, value));
+                    } else {
+                        let value = self.store_str(value);
+                        attributes.push(ParsedAttribute::Valued(key, value));
+                    }
                 } else {
-                    attributes.push(ParsedAttribute(key, None));
+                    return Err(ParseError::AttributeIllegalEquals(at));
                 }
             }
             Ok(attributes)
         }
 
-        /// Parse bracketed construct.
+        /// Parse a bracketed phrase.
         ///
         /// ```text
         /// <bracketed-value> → "{" <value> "}"
@@ -998,7 +1045,7 @@ pub mod parser {
         /// <bracketed-dictionary> → "{" "}"
         ///                        | "{" <dictionary> "}"
         /// ```
-        fn parse_bracketed_construct(&mut self) -> Result<ParsedValue, ParseError> {
+        fn parse_curly_bracket(&mut self) -> Result<ParsedValue, ParseError> {
             if let Reduced::CurlyBracket(from, to, wi, _, scope) = self.t0 {
                 self.shift();
                 let mut parser = Parser::new(scope, self.strings, self.errors, *wi, *to);
@@ -1008,7 +1055,8 @@ pub mod parser {
                         ParsedValue::Dictionary(dictionary, *from, *to)
                     }
                     Reduced::String(..) | Reduced::CurlyBracket(..) | Reduced::SquareBracket(..) | Reduced::AngleBracket(..) | Reduced::Bar(..) | Reduced::Tilde(..) | Reduced::TaggedValueHeader(..) => {
-                        parser.parse_value()?
+                        let (value, _is_tuple) = parser.parse_value()?;
+                        value
                     }
                     Reduced::End(..) => {
                         let dictionary = ParsedDictionary::empty();
@@ -1029,7 +1077,7 @@ pub mod parser {
         /// <bracketed-list> → "[" "]"
         ///                  | "[" <list> "]"
         /// ```
-        fn parse_bracketed_list(&mut self) -> Result<ParsedValue, ParseError> {
+        fn parse_list_bracket(&mut self) -> Result<ParsedValue, ParseError> {
             if let Reduced::SquareBracket(from, to, fw, _, scope) = &self.t0 {
                 self.shift();
                 let mut parser = Parser::new(scope, self.strings, self.errors, *fw, *to);
@@ -1182,7 +1230,6 @@ pub mod parser {
             Reduced::Semicolon(..) => Rule::Semicolon,
             Reduced::Bar(..) => Rule::Bar,
             Reduced::Tilde(..) => Rule::Tilde,
-            Reduced::MapArrow(..) => Rule::MapArrow,
             Reduced::Bullet(..) => Rule::RightAngle,
             Reduced::CurlyBracket(..) => Rule::Bracket,
             Reduced::SquareBracket(..) => Rule::Square,
@@ -1206,6 +1253,7 @@ pub mod parser {
         Block,
         Word,
         Key,
+        Equals,
         Colon,
         Semicolon,
         Tilde,
@@ -1216,8 +1264,8 @@ pub mod parser {
         BracketHeader,
         SquareHeader,
         Close,
-        InnerValue,
-        BarredInnerValue,
+        Catenation,
+        Tuple,
         Value,
         Argument,
         BracketedValue,
@@ -1276,11 +1324,15 @@ pub mod parser {
         //UnexpectedWhitespace(Position, Rule, Rule, Rule, Position),
         UnexpectedWhitespace(Position),
         /// Attribute name at X must be a word but found Y.
-        AttributeMustBeWord(Position, Rule),
+        AttributeMustBeKey(Position, Rule),
         /// Tag name at X must be a word but found Y.
-        TagNameMustBeWord(Position, Rule),
+        TagNameMustBeKey(Position, Rule),
         /// Expected end but found X at Y.
         ExpectedEnd(Rule, Position),
+        /// Illegal equals in attribute at X.
+        AttributeIllegalEquals(Position),
+        /// Illegal equals in argument at X.
+        ArgumentIllegalEquals(Position),
     }
 
     impl Debug for ParseError {
@@ -1324,17 +1376,23 @@ pub mod parser {
             ParseError::UnexpectedWhitespace(at) => {
                 format!("Unexpected whitespace at {}:{} between {} and {} within {} at {}.", at.line, at.column, "-", "-", "-", "-") //TODO
             }
-            ParseError::AttributeMustBeWord(at, found) => {
-                format!("Attribute name at {}:{} must be a word but found {:?}.", at.line, at.column, found)
+            ParseError::AttributeMustBeKey(at, found) => {
+                format!("Attribute name at {}:{} must be a word or transcription but found {:?}.", at.line, at.column, found)
             }
-            ParseError::TagNameMustBeWord(at, found) => {
-                format!("Tag name at {}:{} must be a word but found {:?}.", at.line, at.column, found)
+            ParseError::TagNameMustBeKey(at, found) => {
+                format!("Tag name at {}:{} must be a word or transcription but found {:?}.", at.line, at.column, found)
             }
             ParseError::MismatchedClose(at, _found , scope_at, scope_type) => {
                 format!("Mismatched closing at {}:{} in scope {:?} at {}:{}.", at.line, at.column, scope_type, scope_at.line, scope_at.column)
             }
             ParseError::ExpectedEnd(found, at) => {
                 format!("Expected end but found {:?} at {}:{}.", found, at.line, at.column)
+            }
+            ParseError::AttributeIllegalEquals(at) => {
+                format!("Illegal equals found in attribute at {}:{}.", at.line, at.column)
+            }
+            ParseError::ArgumentIllegalEquals(at) => {
+                format!("Illegal equals found in argument at {}:{}.", at.line, at.column)
             }
         }
     }
@@ -1369,9 +1427,9 @@ pub mod parser {
 pub mod reducer {
 
     use std::slice::Iter;
-    use crate::lex::Token;
-    use crate::parse::parser::Rule;
-    use crate::pdm::Position;
+    use crate::parse::lex::Token;
+    use crate::parse::parse::parser::Rule;
+    use crate::parse::pdm::Position;
 
     /// Reduced token.
     ///
@@ -1396,7 +1454,6 @@ pub mod reducer {
         Bar(Position, bool),
         Tilde(Position, bool),
         Bullet(Position, bool),
-        MapArrow(Position, bool),
         CurlyBracket(Position, Position, bool, bool, Vec<Reduced>),
         SquareBracket(Position, Position, bool, bool, Vec<Reduced>),
         AngleBracket(Position, Position, bool, bool, Vec<Reduced>),
@@ -1426,7 +1483,6 @@ pub mod reducer {
                 Reduced::Bar(..) => Rule::Bar,
                 Reduced::Tilde(..) => Rule::Tilde,
                 Reduced::Bullet(..) => Rule::RightAngle,
-                Reduced::MapArrow(..) => Rule::MapArrow,
                 Reduced::CurlyBracket(..) => Rule::Bracket,
                 Reduced::SquareBracket(..) => Rule::Square,
                 Reduced::AngleBracket(..) => Rule::AngularBracket,
@@ -1446,7 +1502,6 @@ pub mod reducer {
                 Reduced::Bar(_, wa) => *wa,
                 Reduced::Tilde(_, wa) => false, // TODO: Do this to never get ws after tilde.
                 Reduced::Bullet(_, wa) => *wa,
-                Reduced::MapArrow(_, wa) => *wa,
                 Reduced::SquareBracket(_, _, _, wa, _) => *wa,
                 Reduced::CurlyBracket(_, _, _, wa, _) => *wa,
                 Reduced::AngleBracket(_, _, _, wa, _) => *wa,
@@ -1467,7 +1522,6 @@ pub mod reducer {
                 Reduced::Bar(at, _) => *at,
                 Reduced::Tilde(at, _) => *at,
                 Reduced::Bullet(at, _) => *at,
-                Reduced::MapArrow(at, _) => *at,
                 Reduced::SquareBracket(from, _, _, _, _) => *from,
                 Reduced::CurlyBracket(from, _, _, _, _) => *from,
                 Reduced::AngleBracket(from, _, _, _, _) => *from,
@@ -1491,7 +1545,6 @@ pub mod reducer {
                 Reduced::Bar(at, ..) => *at,
                 Reduced::Tilde(at, ..) => *at,
                 Reduced::Bullet(at, ..) => *at,
-                Reduced::MapArrow(at, ..) => *at,
                 Reduced::SquareBracket(_, to, ..) => *to,
                 Reduced::CurlyBracket(_, to, ..) => *to,
                 Reduced::AngleBracket(_, to, ..) => *to,
@@ -1618,12 +1671,6 @@ pub mod reducer {
                         let following = self.t[1];
                         let word = Reduced::Tilde(at, Self::is_whitespace(following));
                         tokens.push(word);
-                        self.shift();
-                    }
-                    Token::DoubleArrow(at) => {
-                        let following = self.t[1];
-                        let arrow = Reduced::MapArrow(at, Self::is_whitespace(following));
-                        tokens.push(arrow);
                         self.shift();
                     }
                     Token::RightAngle(at) => {

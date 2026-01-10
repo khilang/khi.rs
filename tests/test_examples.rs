@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::Read;
-use khi::parse::{parse_dictionary_str, parse_value_str, parse_list_str};
+use khi::parse::parse::{parse_dictionary_str, parse_list_str, parse_value_str};
 
 #[test]
 fn test_example_article_aluminium() {
