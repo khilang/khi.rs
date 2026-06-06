@@ -2,7 +2,7 @@
 
 use std::ops::Deref;
 use crate::parse::pdm::Position;
-use crate::translate_escape_character;
+use crate::translate_substitution;
 
 //// Token
 
@@ -10,7 +10,8 @@ use crate::translate_escape_character;
 pub enum Token {
     Whitespace(Position),
     Word(Position, String, Vec<bool>),
-    Transcription(Position, String),
+    ClosedTranscription(Position, String),
+    UnclosedTranscription(Position, String),
     TextBlock(Position, String),
     Colon(Position),
     Semicolon(Position),
@@ -31,7 +32,8 @@ impl Token {
         match self {
             Token::Whitespace(at) => *at,
             Token::Word(at, ..) => *at,
-            Token::Transcription(at, ..) => *at,
+            Token::ClosedTranscription(at, ..) => *at,
+            Token::UnclosedTranscription(at, ..) => *at,
             Token::TextBlock(at, ..) => *at,
             Token::Colon(at) => *at,
             Token::Semicolon(at) => *at,
@@ -136,32 +138,30 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
                 tokens.push(whitespace);
             } else if c == ':' {
                 if let Some(':') = iter.d { // Colon glyph
-                    let word = lex_word(&mut iter)?;
-                    tokens.push(word);
+                    iter.next(); iter.next();
+                    let esc = Token::ClosedTranscription(iter.position(), c.into());
+                    tokens.push(esc);
                 } else { // Colon
                     tokens.push(Token::Colon(iter.position()));
                     iter.next();
                 }
             } else if c == ';' { // Semicolon
                 if let Some(';') = iter.d { // Semicolon glyph
-                    let word = lex_word(&mut iter)?;
-                    tokens.push(word);
+                    iter.next(); iter.next();
+                    let esc = Token::ClosedTranscription(iter.position(), c.into());
+                    tokens.push(esc);
                 } else { // Semicolon
                     tokens.push(Token::Semicolon(iter.position()));
                     iter.next();
                 }
             } else if c == '|' {
-                if let Some('|') = iter.d { // Bar glyph
-                    let word = lex_word(&mut iter)?;
-                    tokens.push(word);
-                } else { // Bar
-                    tokens.push(Token::Bar(iter.position()));
-                    iter.next();
-                }
+                tokens.push(Token::Bar(iter.position()));
+                iter.next();
             } else if c == '~' {
                 if let Some('~') = iter.d { // Tilde glyph
-                    let word = lex_word(&mut iter)?;
-                    tokens.push(word);
+                    iter.next(); iter.next();
+                    let esc = Token::ClosedTranscription(iter.position(), c.into());
+                    tokens.push(esc);
                 } else { // Tilde
                     tokens.push(Token::Tilde(iter.position()));
                     iter.next();
@@ -187,8 +187,9 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
             } else if c == '<' {
                 if let Some(d) = iter.d {
                     if d == '<' { // Left angle glyph
-                        let token = lex_word(&mut iter)?;
-                        tokens.push(token);
+                        iter.next(); iter.next();
+                        let esc = Token::ClosedTranscription(iter.position(), c.into());
+                        tokens.push(esc);
                     } else if d == '#' { // Text block
                         let text_block = lex_text_block(&mut iter)?;
                         tokens.push(text_block);
@@ -202,8 +203,9 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
                 }
             } else if c == '>' {
                 if let Some('>') = iter.d { // Right angle glyph
-                    let token = lex_word(&mut iter)?;
-                    tokens.push(token);
+                    iter.next(); iter.next();
+                    let esc = Token::ClosedTranscription(iter.position(), c.into());
+                    tokens.push(esc);
                 } else { // Right angle
                     tokens.push(Token::RightAngle(iter.position()));
                     iter.next();
@@ -274,32 +276,23 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
         if let Some(c) = iter.c {
             if is_whitespace(c) { // Whitespace
                 break;
-            } else if c == '\\' || c == '{' || c == '}' || c == '[' || c == ']' { // Reserved
+            } else if c == '\\' || c == '{' || c == '}' || c == '[' || c == ']' || c == '|' || c == '`' /* TODO */ { // Reserved
                 break;
-            } else if c == ':' || c == ';' || c == '|' || c == '~' || c == '<' || c == '>' {
-                if let Some(d) = iter.d {
-                    if d == c { // Repeated escape sequence
-                        iter.next(); iter.next();
-                        string.push(c);
-                        escapes.push(true);
-                    } else { // Reserved
-                        break;
-                    }
-                } else { // Reserved
-                    break;
-                }
+            } else if c == ':' || c == ';' || c == '~' || c == '<' || c == '>' {
+                break;
             } else if c == '`' { // Character escape character
-                if let Some(d) = iter.d { // Escape sequence
-                    let x = match translate_escape_character(d) {
-                        Ok(x) => x,
-                        Err(..) => return Err(LexError::InvalidEscapeSequence(iter.position())),
-                    };
-                    iter.next_two();
-                    string.push(x);
-                    escapes.push(true);
-                } else {
-                    return Err(LexError::EscapeEos);
-                }
+                unimplemented!() // TODO
+                //if let Some(d) = iter.d { // Escape sequence
+                //    let x = match translate_substitution(d) {
+                //        Ok(x) => x,
+                //        Err(..) => return Err(LexError::InvalidEscapeSequence(iter.position())),
+                //    };
+                //    iter.next_two();
+                //    string.push(x);
+                //    escapes.push(true);
+                //} else {
+                //    return Err(LexError::EscapeEos);
+                //}
             } else if c == '#' {
                 if let Some(d) = iter.d {
                     if d == '#' || is_whitespace(d) { // Comment
@@ -339,6 +332,7 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
 fn lex_transcription<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token, LexError> {
     let at = iter.position();
     let mut string = String::new();
+    let mut closed = true;
     iter.next();
     loop {
         if let Some(c) = iter.c {
@@ -346,18 +340,10 @@ fn lex_transcription<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Resu
                 iter.next();
                 break;
             } else if c == '\n' {
-                iter.next();
-                while let Some(c) = iter.c {
-                    if is_whitespace(c) {
-                        iter.next();
-                    } else {
-                        break;
-                    }
-                }
-                break;
+                return lex_open_transcription(iter, string);
             } else if c == '`' {
                 if let Some(d) = iter.d {
-                    let e = match translate_escape_character(d) {
+                    let e = match translate_substitution(d) {
                         Ok(e) => e,
                         Err(..) => return Err(LexError::InvalidEscapeSequence(iter.position())),
                     };
@@ -374,7 +360,59 @@ fn lex_transcription<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Resu
             break;
         };
     };
-    Ok(Token::Transcription(at, string))
+    if closed {
+        Ok(Token::ClosedTranscription(at, string))
+    } else {
+        Ok(Token::UnclosedTranscription(at, string))
+    }
+}
+
+/// Lex an open transcription.
+///
+/// Assumes that the current character is `\n`.
+fn lex_open_transcription<It: Iterator<Item = char>>(iter: &mut CharIter<It>, mut string: String) -> Result<Token, LexError> {
+    let at = iter.position();
+    'out: loop {
+        if let Some(c) = iter.c {
+            if c == '\\' {
+                return Err(LexError::CannotCloseOpenTranscription(at));
+            } else if c == '\n' {
+                if let None = iter.d {
+                    iter.next();
+                }
+                while let Some(d) = iter.d {
+                    if is_whitespace(d) {
+                        iter.next();
+                    } else {
+                        if d == '\\' {
+                            iter.next();
+                            iter.next();
+                            break;
+                        } else {
+                            break 'out;
+                        }
+                    }
+                }
+            } else if c == '`' {
+                if let Some(d) = iter.d {
+                    let e = match translate_substitution(d) {
+                        Ok(e) => e,
+                        Err(..) => return Err(LexError::InvalidEscapeSequence(iter.position())),
+                    };
+                    iter.next_two();
+                    string.push(e);
+                } else {
+                    return Err(LexError::EscapeEos);
+                };
+            } else {
+                iter.next();
+                string.push(c);
+            };
+        } else {
+            break;
+        };
+    };
+    Ok(Token::UnclosedTranscription(at, string))
 }
 
 /// Lex a text block.
@@ -383,7 +421,7 @@ fn lex_transcription<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Resu
 fn lex_text_block<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token, LexError> {
     let at = iter.position();
     let mut closing_tag = String::new();
-    let mut configuration = vec![Flag::Footer, Flag::Header, Flag::Excess];
+    let mut configuration = vec![Flag::Footer, Flag::Header, Flag::Excess, Flag::Trailing];
     let mut content = String::new();
     iter.next_two();
     closing_tag.push('<');
@@ -394,9 +432,10 @@ fn lex_text_block<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<
                 iter.next();
                 closing_tag.push('>');
                 break;
-            } else if is_whitespace(c) {
+            } else if c == ':' {
+                iter.next();
                 closing_tag.push('>');
-                skip_whitespace_in_text_block_tag(iter, at)?;
+                //skip_whitespace_in_text_block_tag(iter, at)?;
                 loop { // Read configuration
                     if let Some(c) = iter.c {
                         if c == 'f' {
@@ -434,7 +473,7 @@ fn lex_text_block<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<
                         return Err(LexError::UnclosedTextBlock(iter.position()));
                     }
                 }
-            } else {
+            } else { // TODO: Restrict allowed characters
                 iter.next();
                 closing_tag.push(c);
             }
@@ -493,6 +532,7 @@ pub enum LexError {
     UnclosedTextBlock(Position),
     /// Invalid text block configuration.
     InvalidTextBlockConfiguration(Position),
+    CannotCloseOpenTranscription(Position),
 }
 
 //// Strings
@@ -542,26 +582,31 @@ fn delete_blank_header(string: String) -> String {
 fn delete_excess_indentation(string: String) -> String {
     let mut string = string.into_bytes();
     let len = string.len();
-    let mut r = len;
-    while r > 0 {
-        r -= 1; let c = string[r];
-        if c == '\n' as u8 {
-            break;
-        }
-    }
+    //let mut r = len;
+    //while r > 0 {
+    //    r -= 1; let c = string[r];
+    //    if c == '\n' as u8 {
+    //        break;
+    //    }
+    //}
+    // Find the excess indentation from the first non-blank line.
     let mut indentation = vec![];
     let mut i = 0;
-    while i < r {
+    while i < len {
         let c = string[i];
         if c == ' ' as u8 || c == '\t' as u8 {
             indentation.push(c);
             i += 1;
+        } else if c == '\n' as u8 { // No indentation if the line was blank.
+            indentation.clear();
+            i += 1;
         } else {
-            skip_to_next_line(&string, r, &mut i);
+            skip_to_next_line(&string, len, &mut i);
             break;
         }
     }
-    while i < r {
+    // Truncate the found excess indentation if any non-blank line has lesser indentation.
+    while i < len {
         let x = indentation.len();
         let mut j = 0;
         while j < x {
@@ -569,19 +614,35 @@ fn delete_excess_indentation(string: String) -> String {
             if c == indentation[j] {
                 i += 1;
                 j += 1;
+            } else if c == '\n' as u8 { // No indentation if the line was blank.
+                i += 1;
+                j = 0;
+                continue;
             } else {
                 indentation.truncate(j);
                 break;
             }
         }
-        skip_to_next_line(&string, r, &mut i);
+        skip_to_next_line(&string, len, &mut i);
     }
     let excess = indentation.len();
     if excess > 0 {
         let mut i = 0;
         let mut j = 0;
-        while i < r {
-            i += excess;
+        'out: while i < len {
+            let mut k = 0;
+            while k < excess {
+                let c = string[i];
+                if c == '\n' as u8 {
+                    i += 1;
+                    string[j] = '\n' as u8;
+                    j += 1;
+                    continue 'out;
+                } else {
+                    i += 1;
+                    k += 1;
+                }
+            }
             copy_line(&mut string, len, &mut i, &mut j);
         }
         while i < len {

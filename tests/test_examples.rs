@@ -1,3 +1,5 @@
+mod common;
+
 use std::fs::File;
 use std::io::Read;
 use khi::parse::parse::{parse_dictionary_str, parse_list_str, parse_value_str};
@@ -5,6 +7,11 @@ use khi::parse::parse::{parse_dictionary_str, parse_list_str, parse_value_str};
 #[test]
 fn test_example_article_aluminium() {
     parse_dictionary_str(&read_document_file("examples/aluminium.a")).unwrap();
+}
+
+#[test]
+fn test_example_service_file() {
+    parse_dictionary_str(&read_document_file("examples/apache.service.khi")).unwrap();
 }
 
 #[test]
@@ -40,6 +47,11 @@ fn test_example_materials() {
 #[test]
 fn test_example_primes() {
     parse_list_str(&read_document_file("examples/primes.khi")).unwrap();
+}
+
+#[test]
+fn test_example_products() {
+    parse_dictionary_str(&read_document_file("examples/products.khi")).unwrap();
 }
 
 #[test]

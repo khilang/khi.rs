@@ -11,6 +11,7 @@ pub mod html;
 
 //#[cfg(feature = "serde")]
 //pub mod ser;
+
 //#[cfg(feature = "serde")]
 //pub mod de;
 
@@ -23,28 +24,24 @@ pub mod html;
 /// structure.
 ///
 /// Is one of:
-/// - nil
 /// - text
-/// - dictionary
 /// - tuple
+/// - dictionary
 /// - list
 /// - catenation
-/// - tag
+/// - nil
 pub trait Value<
-    Va: Value<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tx: Text<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Dc: Dictionary<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Ls: List<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Ca: Catenation<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tp: Tuple<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tg: Tagged<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
+    Va: Value<Va, Tx, Tg, Dc, Ls, Ca>,
+    Tx: Text<Va, Tx, Tg, Dc, Ls, Ca>,
+    Tg: TaggedTuple<Va, Tx, Tg, Dc, Ls, Ca>,
+    Dc: Dictionary<Va, Tx, Tg, Dc, Ls, Ca>,
+    Ls: List<Va, Tx, Tg, Dc, Ls, Ca>,
+    Ca: Catenation<Va, Tx, Tg, Dc, Ls, Ca>,
 > {
     /// Check if this is text.
     fn is_text(&self) -> bool;
-    /// Check if this is a tag.
-    fn is_tagged(&self) -> bool;
-    /// Check if this is a tuple.
-    fn is_tuple(&self) -> bool;
+    /// Check if this is a tagged tuple.
+    fn is_tagged_tuple(&self) -> bool;
     /// Check if this is a dictionary.
     fn is_dictionary(&self) -> bool;
     /// Check if this is a table.
@@ -55,10 +52,8 @@ pub trait Value<
     fn is_nil(&self) -> bool;
     /// Get as text.
     fn as_text(&self) -> Option<&Tx>;
-    /// Get as a tagged value.
-    fn as_tagged(&self) -> Option<&Tg>;
-    /// Get as a tuple.
-    fn as_tuple(&self) -> Option<&Tp>;
+    /// Get as a tagged tuple.
+    fn as_tagged_tuple(&self) -> Option<&Tg>;
     /// Get as a dictionary.
     fn as_dictionary(&self) -> Option<&Dc>;
     /// Get as a table.
@@ -67,10 +62,8 @@ pub trait Value<
     fn as_catenation(&self) -> Option<&Ca>;
     /// Get as text.
     fn as_mut_text(&mut self) -> Option<&mut Tx>;
-    /// Get as a tagged value.
-    fn as_mut_tagged(&mut self) -> Option<&mut Tg>;
-    /// Get as a tuple.
-    fn as_mut_tuple(&mut self) -> Option<&mut Tp>;
+    /// Get as a tagged tuple.
+    fn as_mut_tagged_tuple(&mut self) -> Option<&mut Tg>;
     /// Get as a dictionary.
     fn as_mut_dictionary(&mut self) -> Option<&mut Dc>;
     /// Get as a table.
@@ -81,7 +74,7 @@ pub trait Value<
     ///
     /// If the value is a tuple, its elements are iterated over. Otherwise,
     /// the single value itself is iterated over.
-    fn iter_as_tuple<'b>(&'b self) -> impl Iterator<Item=ParsedTupleElement<'b, &'b Va>> where Va: 'b;
+    fn iter_as_tuple<'b>(&'b self) -> impl Iterator<Item=&'b Va> where Va: 'b;
     /// Get the length of this value as a tuple.
     ///
     /// If the value is a tuple, its length is returned. Otherwise, 1 is
@@ -89,33 +82,41 @@ pub trait Value<
     fn len_as_tuple(&self) -> usize;
 }
 
+#[derive(Eq, PartialEq, Copy, Clone)]
+pub enum TextType {
+    Open,
+    Closed,
+    Escaped,
+}
+
 /// Text.
 pub trait Text<
-    Va: Value<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tx: Text<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Dc: Dictionary<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Ls: List<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Ca: Catenation<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tp: Tuple<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tg: Tagged<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
+    Va: Value<Va, Tx, Tg, Dc, Ls, Ca>,
+    Tx: Text<Va, Tx, Tg, Dc, Ls, Ca>,
+    Tg: TaggedTuple<Va, Tx, Tg, Dc, Ls, Ca>,
+    Dc: Dictionary<Va, Tx, Tg, Dc, Ls, Ca>,
+    Ls: List<Va, Tx, Tg, Dc, Ls, Ca>,
+    Ca: Catenation<Va, Tx, Tg, Dc, Ls, Ca>,
 > {
     fn as_str(&self) -> &str;
+    fn get_type(&self) -> TextType;
 }
 
 /// A tagged value.
-pub trait Tagged<
-    Va: Value<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tx: Text<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Dc: Dictionary<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Ls: List<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Ca: Catenation<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tp: Tuple<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tg: Tagged<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
+pub trait TaggedTuple<
+    Va: Value<Va, Tx, Tg, Dc, Ls, Ca>,
+    Tx: Text<Va, Tx, Tg, Dc, Ls, Ca>,
+    Tg: TaggedTuple<Va, Tx, Tg, Dc, Ls, Ca>,
+    Dc: Dictionary<Va, Tx, Tg, Dc, Ls, Ca>,
+    Ls: List<Va, Tx, Tg, Dc, Ls, Ca>,
+    Ca: Catenation<Va, Tx, Tg, Dc, Ls, Ca>,
 > {
     /// Iterator over tag attributes.
     type AttributeIterator<'b>: Iterator<Item=Attribute<'b>> + 'b where Self: 'b;
+    type TupleIterator<'b>: Iterator<Item=&'b Va> where Self: 'b, Va: 'b;
+    type TupleIteratorMut<'b>: Iterator<Item=&'b mut Va> where Self: 'b, Va: 'b;
     /// Name of the tag.
-    fn name(&self) -> &str;
+    fn name(&self) -> Option<&str>;
     /// Check if this tag has attributes.
     fn has_attributes(&self) -> bool;
     /// Get the attribute by key.
@@ -124,8 +125,17 @@ pub trait Tagged<
     fn get_attribute_at(&self, index: usize) -> Option<Attribute<'_>>;
     /// Iterate over the attributes of this tag.
     fn iter_attributes(&self) -> Self::AttributeIterator<'_>;
-    /// Get the tagged value.
-    fn get(&self) -> &Tp;
+    /// Number of elements in the tuple.
+    fn len(&self) -> usize;
+    /// Check if this tuple is empty.
+    fn is_empty(&self) -> bool;
+    /// Get the element at index.
+    fn get(&self, index: usize) -> Option<&Va>;
+    /// Get the element at index as mutable.
+    fn get_mut(&mut self, index: usize) -> Option<&mut Va>;
+    /// Iterate over the elements in this tuple.
+    fn iter(&self) -> Self::TupleIterator<'_>;
+    fn iter_mut(&mut self) -> Self::TupleIteratorMut<'_>;
 }
 
 /// An attribute of a tag.
@@ -137,46 +147,14 @@ pub enum AttributeValue<'a> {
     Value(&'a str),
 }
 
-#[derive(Clone)]
-pub enum ParsedTupleElement<'a, Va> {
-    Element(Va),
-    NamedElement(&'a str, Va),
-}
-
-/// A tuple.
-pub trait Tuple<
-    Va: Value<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tx: Text<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Dc: Dictionary<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Ls: List<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Ca: Catenation<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tp: Tuple<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tg: Tagged<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-> {
-    type TupleIterator<'b>: Iterator<Item=ParsedTupleElement<'b, &'b Va>> where Self: 'b, Va: 'b;
-    type TupleIteratorMut<'b>: Iterator<Item=ParsedTupleElement<'b, &'b mut Va>> where Self: 'b, Va: 'b;
-    /// Number of elements in the tuple.
-    fn len(&self) -> usize;
-    /// Check if this tuple is empty.
-    fn is_empty(&self) -> bool;
-    /// Get the element at index.
-    fn get(&self, index: usize) -> Option<ParsedTupleElement<&Va>>;
-    /// Get the element at index as mutable.
-    fn get_mut(&mut self, index: usize) -> Option<ParsedTupleElement<&mut Va>>;
-    /// Iterate over the elements in this tuple.
-    fn iter(&self) -> Self::TupleIterator<'_>;
-    fn iter_mut(&mut self) -> Self::TupleIteratorMut<'_>;
-}
-
 /// A dictionary.
 pub trait Dictionary<
-    Va: Value<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tx: Text<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Dc: Dictionary<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Ls: List<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Ca: Catenation<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tp: Tuple<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tg: Tagged<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
+    Va: Value<Va, Tx, Tg, Dc, Ls, Ca>,
+    Tx: Text<Va, Tx, Tg, Dc, Ls, Ca>,
+    Tg: TaggedTuple<Va, Tx, Tg, Dc, Ls, Ca>,
+    Dc: Dictionary<Va, Tx, Tg, Dc, Ls, Ca>,
+    Ls: List<Va, Tx, Tg, Dc, Ls, Ca>,
+    Ca: Catenation<Va, Tx, Tg, Dc, Ls, Ca>,
 > {
     type EntryIterator<'b>: Iterator<Item=(&'b str, &'b Va)> where Self: 'b, Va: 'b;
     type EntryIteratorMut<'b>: Iterator<Item=(&'b str, &'b mut Va)> where Self: 'b, Va: 'b;
@@ -195,13 +173,12 @@ pub trait Dictionary<
 
 /// A list.
 pub trait List<
-    Va: Value<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tx: Text<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Dc: Dictionary<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Ls: List<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Ca: Catenation<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tp: Tuple<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tg: Tagged<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
+    Va: Value<Va, Tx, Tg, Dc, Ls, Ca>,
+    Tx: Text<Va, Tx, Tg, Dc, Ls, Ca>,
+    Tg: TaggedTuple<Va, Tx, Tg, Dc, Ls, Ca>,
+    Dc: Dictionary<Va, Tx, Tg, Dc, Ls, Ca>,
+    Ls: List<Va, Tx, Tg, Dc, Ls, Ca>,
+    Ca: Catenation<Va, Tx, Tg, Dc, Ls, Ca>,
 > {
     /// Iterator over the entries in a table.
     type ListIterator<'b>: Iterator<Item=&'b Va> where Self: 'b, Va: 'b;
@@ -221,13 +198,12 @@ pub trait List<
 
 /// A catenation.
 pub trait Catenation<
-    Va: Value<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tx: Text<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Dc: Dictionary<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Ls: List<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Ca: Catenation<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tp: Tuple<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
-    Tg: Tagged<Va, Tx, Dc, Ls, Ca, Tp, Tg>,
+    Va: Value<Va, Tx, Tg, Dc, Ls, Ca>,
+    Tx: Text<Va, Tx, Tg, Dc, Ls, Ca>,
+    Tg: TaggedTuple<Va, Tx, Tg, Dc, Ls, Ca>,
+    Dc: Dictionary<Va, Tx, Tg, Dc, Ls, Ca>,
+    Ls: List<Va, Tx, Tg, Dc, Ls, Ca>,
+    Ca: Catenation<Va, Tx, Tg, Dc, Ls, Ca>,
 > {
     /// Iterator over the elements in a catenation.
     type ElementIterator<'a>: Iterator<Item=&'a Element<Va>> where Self: 'a, Va: 'a;
@@ -245,12 +221,13 @@ pub trait Catenation<
 /// An element in a catenation.
 #[derive(Clone)]
 pub enum Element<T> {
-    Element(T),
-    Whitespace,
+    /// (element, bracketed)
+    Element(T, bool),
+    Separator,
 }
 
 /// Get the character corresponding to an escaped character sequence.
-pub fn translate_escape_character(char: char) -> Result<char, ()> {
+pub fn translate_substitution(char: char) -> Result<char, ()> {
     match char {
         '`' => Ok('`'),
         '\\' => Ok('\\'),

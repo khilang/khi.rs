@@ -1,6 +1,6 @@
 use std::ops::Deref;
-use crate::{Dictionary, Tagged, Value, Text, Element, Attribute, Catenation, Tuple};
-use crate::parse::pdm::{ParsedDictionary, ParsedTaggedValue, ParsedTuple, ParsedValue, Position};
+use crate::{Dictionary, TaggedTuple, Value, Text, Element, Attribute, Catenation, Tuple};
+use crate::parse::pdm::{ParsedDictionary, ParsedTaggedTuple, ParsedTuple, ParsedValue, Position};
 
 pub fn write_html(value: &ParsedValue) -> Result<String, PreprocessorError> {
     let mut output = String::new();
@@ -97,14 +97,14 @@ impl XmlWriter<'_> {
                     return Err(PreprocessorError::IllegalTuple(*from));
                 }
             }
-            ParsedValue::Tagged(tag, from, to) => {
+            ParsedValue::TaggedTuple(tag, from, to) => {
                 self.write_tag(tag, *from)?;
             }
         }
         Ok(())
     }
 
-    fn write_tag(&mut self, tag: &ParsedTaggedValue, at: Position) -> Result<(), PreprocessorError> {
+    fn write_tag(&mut self, tag: &ParsedTaggedTuple, at: Position) -> Result<(), PreprocessorError> {
         let name = tag.name();
         let inner_value = tag.get();
         if name.ends_with('!') {
