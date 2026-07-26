@@ -47,7 +47,7 @@ fn test_strings_2() {
     let src2 = indoc! {r"
         \Paragraph number one.
         \Paragraph number two.
-        three.
+         three.
     "};
     //let src3 = indoc! {r"
     //    Paragraph number \

@@ -11,7 +11,7 @@ pub enum Token {
     Whitespace(Position),
     Word(Position, String, Vec<bool>),
     ClosedTranscription(Position, String),
-    UnclosedTranscription(Position, String),
+    OpenTranscription(Position, String),
     TextBlock(Position, String),
     Colon(Position),
     Semicolon(Position),
@@ -33,7 +33,7 @@ impl Token {
             Token::Whitespace(at) => *at,
             Token::Word(at, ..) => *at,
             Token::ClosedTranscription(at, ..) => *at,
-            Token::UnclosedTranscription(at, ..) => *at,
+            Token::OpenTranscription(at, ..) => *at,
             Token::TextBlock(at, ..) => *at,
             Token::Colon(at) => *at,
             Token::Semicolon(at) => *at,
@@ -166,9 +166,6 @@ pub fn lex<It: Iterator<Item = char>>(chars: It) -> Result<Vec<Token>, LexError>
                     tokens.push(Token::Tilde(iter.position()));
                     iter.next();
                 }
-            } else if c == '`' { // Illegal escape character
-                let word = lex_word(&mut iter)?;
-                tokens.push(word);
             } else if c == '\\' { // Transcription
                 let transcription = lex_transcription(&mut iter)?;
                 tokens.push(transcription);
@@ -276,23 +273,10 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
         if let Some(c) = iter.c {
             if is_whitespace(c) { // Whitespace
                 break;
-            } else if c == '\\' || c == '{' || c == '}' || c == '[' || c == ']' || c == '|' || c == '`' /* TODO */ { // Reserved
+            } else if c == '\\' || c == '{' || c == '}' || c == '[' || c == ']' || c == '|' {
                 break;
             } else if c == ':' || c == ';' || c == '~' || c == '<' || c == '>' {
                 break;
-            } else if c == '`' { // Character escape character
-                unimplemented!() // TODO
-                //if let Some(d) = iter.d { // Escape sequence
-                //    let x = match translate_substitution(d) {
-                //        Ok(x) => x,
-                //        Err(..) => return Err(LexError::InvalidEscapeSequence(iter.position())),
-                //    };
-                //    iter.next_two();
-                //    string.push(x);
-                //    escapes.push(true);
-                //} else {
-                //    return Err(LexError::EscapeEos);
-                //}
             } else if c == '#' {
                 if let Some(d) = iter.d {
                     if d == '#' || is_whitespace(d) { // Comment
@@ -332,7 +316,6 @@ fn lex_word<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token,
 fn lex_transcription<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Result<Token, LexError> {
     let at = iter.position();
     let mut string = String::new();
-    let mut closed = true;
     iter.next();
     loop {
         if let Some(c) = iter.c {
@@ -360,11 +343,7 @@ fn lex_transcription<It: Iterator<Item = char>>(iter: &mut CharIter<It>) -> Resu
             break;
         };
     };
-    if closed {
-        Ok(Token::ClosedTranscription(at, string))
-    } else {
-        Ok(Token::UnclosedTranscription(at, string))
-    }
+    Ok(Token::ClosedTranscription(at, string))
 }
 
 /// Lex an open transcription.
@@ -389,6 +368,7 @@ fn lex_open_transcription<It: Iterator<Item = char>>(iter: &mut CharIter<It>, mu
                             iter.next();
                             break;
                         } else {
+                            //iter.next(); // Leave the whitespace character so that there is always space after open transcription.
                             break 'out;
                         }
                     }
@@ -412,7 +392,7 @@ fn lex_open_transcription<It: Iterator<Item = char>>(iter: &mut CharIter<It>, mu
             break;
         };
     };
-    Ok(Token::UnclosedTranscription(at, string))
+    Ok(Token::OpenTranscription(at, string))
 }
 
 /// Lex a text block.

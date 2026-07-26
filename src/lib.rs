@@ -84,9 +84,9 @@ pub trait Value<
 
 #[derive(Eq, PartialEq, Copy, Clone)]
 pub enum TextType {
-    Open,
-    Closed,
-    Escaped,
+    Plain,
+    Bracket,
+    Literal,
 }
 
 /// Text.

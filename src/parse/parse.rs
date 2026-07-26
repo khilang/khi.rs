@@ -301,7 +301,7 @@ pub mod parser {
                         self.shift();
                         let to = self.at();
                         let str = self.store_str(&content);
-                        let text = ParsedText { str, text_type: TextType::Escaped };
+                        let text = ParsedText { str, text_type: TextType::Literal };
                         Ok(ParsedValue::Text(text, *from, to))
                     }
                     StringType::Word => {
@@ -325,7 +325,7 @@ pub mod parser {
                         }
                         let to = self.at();
                         let str = self.store_str(&text);
-                        let text = ParsedText { str, text_type: TextType::Open };
+                        let text = ParsedText { str, text_type: TextType::Plain };
                         Ok(ParsedValue::Text(text, *from, to))
                     }
                 }
@@ -339,9 +339,10 @@ pub mod parser {
         /// ```text
         /// <confined-text> → [word]
         ///                 | [closed-transcription]
+        ///                 | [open-transcription]
         ///                 | [text-block]
         /// ```
-        fn parse_confined_text(&mut self) -> Result<Rc<str>, ParseError> { // TODO Not unclosed transcription
+        fn parse_confined_text(&mut self) -> Result<Rc<str>, ParseError> {
             match self.t0 {
                 Grouped::String(.., text) => {
                     self.shift();
@@ -852,21 +853,6 @@ pub mod parser {
         /// Parse arguments.
         ///
         /// ```text
-        /// <arguments> → ":"<argument>
-        ///             | ":"<argument><arguments>
-        /// ```
-        /// `<argument>` takes precedence over `<arguments>` on ambiguity with
-        /// `<tagged-arguments>`.
-        ///
-        /// ```text
-        /// <argument> → <string>
-        ///            | <bracketed-value>
-        ///            | <bracketed-dictionary>
-        ///            | <bracketed-list>
-        ///            | <tagged-arguments>
-        /// ```
-        ///
-        /// ```text
         /// <confined-values> → ":"<confined-catenation>
         ///                   | ":"<confined-catenation><confined-values>
         /// ```
@@ -874,7 +860,7 @@ pub mod parser {
         ///
         /// ```text
         /// <confined-catenation> → <confined-value>
-        ///                       | <confined-text><confined-value>
+        ///                       | [word]<confined-value>
         /// ```
         ///
         /// ```text
@@ -895,41 +881,37 @@ pub mod parser {
                 self.shift();
                 match self.t0 {
                     Grouped::String(from, to, .., typ, s) => {
-                        if *typ == StringType::Word || *typ == StringType::ClosedTranscription || *typ == StringType::TextBlock {
-                            self.shift();
-                            let str = self.store_str(s);
-                            let text_type = match *typ {
-                                StringType::Word => TextType::Open,
-                                StringType::ClosedTranscription => TextType::Escaped,
-                                StringType::UnclosedTranscription => TextType::Escaped,
-                                StringType::TextBlock => TextType::Escaped,
-                            };
-                            let text = ParsedValue::Text(ParsedText { str, text_type }, *from, *to);
-                            if !self.whitespace_before && *typ == StringType::Word {
-                                let arg2 = match self.t0 {
-                                    Grouped::CurlyBracket(..) => {
-                                        Some(self.parse_curly_bracket()?)
-                                    }
-                                    Grouped::SquareBracket(..) => {
-                                        Some(self.parse_list_bracket()?)
-                                    }
-                                    Grouped::AngleBracket(..) => {
-                                        Some(self.parse_confined_tuple()?)
-                                        //break;
-                                    }
-                                    _ => None,
-                                };
-                                if let Some(arg2) = arg2 {
-                                    let to = self.at();
-                                    arguments.push(ParsedTupleElement::Positional(ParsedValue::Catenation(ParsedCatenation { components: vec![Element::Element(text, true), Element::Element(arg2, false)] }, *from, to)));
-                                } else {
-                                    arguments.push(ParsedTupleElement::Positional(text));
+                        self.shift();
+                        let str = self.store_str(s);
+                        let text_type = match *typ {
+                            StringType::Word => TextType::Plain,
+                            StringType::ClosedTranscription => TextType::Literal,
+                            StringType::UnclosedTranscription => TextType::Literal,
+                            StringType::TextBlock => TextType::Literal,
+                        };
+                        let text = ParsedValue::Text(ParsedText { str, text_type }, *from, *to);
+                        if !self.whitespace_before && *typ == StringType::Word {
+                            let arg2 = match self.t0 {
+                                Grouped::CurlyBracket(..) => {
+                                    Some(self.parse_curly_bracket()?)
                                 }
+                                Grouped::SquareBracket(..) => {
+                                    Some(self.parse_list_bracket()?)
+                                }
+                                Grouped::AngleBracket(..) => {
+                                    Some(self.parse_confined_tuple()?)
+                                    //break;
+                                }
+                                _ => None,
+                            };
+                            if let Some(arg2) = arg2 {
+                                let to = self.at();
+                                arguments.push(ParsedTupleElement::Positional(ParsedValue::Catenation(ParsedCatenation { components: vec![Element::Element(text, true), Element::Element(arg2, false)] }, *from, to)));
                             } else {
                                 arguments.push(ParsedTupleElement::Positional(text));
                             }
                         } else {
-                            unimplemented!() // TODO Error
+                            arguments.push(ParsedTupleElement::Positional(text));
                         }
                     }
                     Grouped::CurlyBracket(..) => {
@@ -1060,7 +1042,6 @@ pub mod parser {
         /// <catenation> → <term>
         ///              | <term> <catenation>
         ///              | "~"
-        ///              | "~" <catenation>
         /// ```
         /// `<term>` takes precedence over `<catenation>` on ambiguity, which can occur
         /// with `~` when `<term>` matches `<text>`.
@@ -1081,37 +1062,37 @@ pub mod parser {
             if !matches!(self.t0, Grouped::String(..) | Grouped::CurlyBracket(..) | Grouped::SquareBracket(..) | Grouped::AngleBracket(..) | Grouped::Tilde(..)) {
                 return ParseError::token_expectation_error(&[Rule::String, Rule::BracketedDictionary, Rule::BracketedValue, Rule::BracketedList, Rule::TaggedArguments, Rule::Tilde], self.t0, Rule::Catenation, self.t0.at());
             }
-            loop {
-                space_before = self.whitespace_before;
-                match self.t0 {
-                    Grouped::String(f, fg, h, hj, typ) => {
-                        let bracket = *hj != StringType::Word;
-                        let text = self.parse_text()?;
-                        push_term(&mut terms, &mut bracketed, &mut whitespace, text, space_before, bracket);
-                    }
-                    Grouped::CurlyBracket(..) => {
-                        let mut value = self.parse_curly_bracket()?;
-                        if value.is_text() { // Track if open text has brackets around it.
-                            let text = value.as_mut_text().unwrap();
-                            if text.text_type == TextType::Open {
-                                text.text_type = TextType::Closed;
-                            }
+            if matches!(self.t0, Grouped::Tilde(..)) {
+                self.shift();
+            } else {
+                loop {
+                    space_before = self.whitespace_before;
+                    match self.t0 {
+                        Grouped::String(f, fg, h, hj, typ) => {
+                            let bracket = *hj != StringType::Word;
+                            let text = self.parse_text()?;
+                            push_term(&mut terms, &mut bracketed, &mut whitespace, text, space_before, bracket);
                         }
-                        push_term(&mut terms, &mut bracketed, &mut whitespace, value, space_before, true);
+                        Grouped::CurlyBracket(..) => {
+                            let mut value = self.parse_curly_bracket()?;
+                            if value.is_text() { // Track if open text has brackets around it.
+                                let text = value.as_mut_text().unwrap();
+                                if text.text_type == TextType::Plain {
+                                    text.text_type = TextType::Bracket;
+                                }
+                            }
+                            push_term(&mut terms, &mut bracketed, &mut whitespace, value, space_before, true);
+                        }
+                        Grouped::SquareBracket(..) => {
+                            let value = self.parse_list_bracket()?;
+                            push_term(&mut terms, &mut bracketed, &mut whitespace, value, space_before, true);
+                        },
+                        Grouped::AngleBracket(..) => {
+                            let value = self.parse_confined_tuple()?;
+                            push_term(&mut terms, &mut bracketed, &mut whitespace, value, space_before, true);
+                        },
+                        _ => break,
                     }
-                    Grouped::SquareBracket(..) => {
-                        let value = self.parse_list_bracket()?;
-                        push_term(&mut terms, &mut bracketed, &mut whitespace, value, space_before, true);
-                    },
-                    Grouped::AngleBracket(..) => {
-                        let value = self.parse_confined_tuple()?;
-                        push_term(&mut terms, &mut bracketed, &mut whitespace, value, space_before, true);
-                    },
-                    Grouped::Tilde(..) => {
-                        self.shift();
-                        space_before = false;
-                    }
-                    _ => break,
                 }
             }
             let to = self.at();
@@ -1760,12 +1741,12 @@ pub mod grouper {
                     Token::Whitespace(_) => {
                         self.shift();
                     }
-                    Token::Word(at, string, _) | Token::ClosedTranscription(at, string) | Token::UnclosedTranscription(at, string) | Token::TextBlock(at, string) => {
+                    Token::Word(at, string, _) | Token::ClosedTranscription(at, string) | Token::OpenTranscription(at, string) | Token::TextBlock(at, string) => {
                         let string_type = if matches!(self.t[0], Token::Word(..)) {
                             StringType::Word
                         } else if matches!(self.t[0], Token::ClosedTranscription(..)) {
                             StringType::ClosedTranscription
-                        } else if matches!(self.t[0], Token::UnclosedTranscription(..)) {
+                        } else if matches!(self.t[0], Token::OpenTranscription(..)) {
                             StringType::UnclosedTranscription
                         } else {
                             StringType::TextBlock
@@ -1774,7 +1755,7 @@ pub mod grouper {
                             Token::Word(_, _, unescaped) => {
                                 unescaped.clone()
                             }
-                            Token::ClosedTranscription(_, string) | Token::UnclosedTranscription(_, string) | Token::TextBlock(_, string) => {
+                            Token::ClosedTranscription(_, string) | Token::OpenTranscription(_, string) | Token::TextBlock(_, string) => {
                                 let mut escapes = vec![];
                                 for c in string.chars() {
                                     escapes.push(true);

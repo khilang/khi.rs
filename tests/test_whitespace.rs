@@ -77,6 +77,7 @@ fn test_delimited_dictionary() {
 fn test_aligned_dictionary() {
     assert_ok(parse_value_str(r"{A: a B: b}"));
     assert_err(parse_value_str(r"{A: \a\B: b}"));
+    assert_ok(parse_value_str("{A: \\a\nB: b}"));
 }
 
 /// ```
