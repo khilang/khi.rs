@@ -33,7 +33,7 @@ impl ParsedValue {
         ParsedValue::Nil(from, to)
     }
 
-    pub fn from_terms(from: Position, to: Position, mut terms: Vec<ParsedValue>, whitespace: Vec<bool>, brackets: Vec<bool>) -> Self {
+    pub fn from_terms(from: Position, to: Position, mut terms: Vec<ParsedValue>, whitespace: Vec<bool>) -> Self {
         let len = terms.len();
         if len == 0 {
             ParsedValue::Nil(from, to)
@@ -43,13 +43,13 @@ impl ParsedValue {
             let mut components = vec![];
             let mut i = 0;
             while i < terms.len() - 1 {
-                components.push(Element::Element(terms[i].clone(), brackets[i]));
+                components.push(Element::Element(terms[i].clone()));
                 if whitespace[i] {
                     components.push(Element::Separator);
                 }
                 i += 1;
             }
-            components.push(Element::Element(terms[i].clone(), brackets[i])); // TODO No clone
+            components.push(Element::Element(terms[i].clone())); // TODO No clone
             ParsedValue::Catenation(ParsedCatenation { components }, from, to)
         }
     }
@@ -84,6 +84,49 @@ impl ParsedValue {
         }
     }
 
+    pub fn iter_as_catenation(&self) -> impl Iterator<Item=Element<&ParsedValue>> {
+        match self {
+            ParsedValue::Catenation(catenation, _, _) => IterAsCat::Cat(catenation.iter()),
+            ParsedValue::Nil(_, _) => IterAsCat::Nil,
+            v => IterAsCat::One(v, false),
+        }
+    }
+
+}
+
+enum IterAsCat<'b> {
+    Cat(Iter<'b, Element<ParsedValue>>),
+    One(&'b ParsedValue, bool),
+    Nil
+}
+
+impl<'b> Iterator for IterAsCat<'b> {
+    type Item = Element<&'b ParsedValue>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            IterAsCat::Cat(iter) => {
+                if let Some(e) = iter.next() {
+                    if let Element::Element(v) = e {
+                        Some(Element::Element(v))
+                    } else {
+                        Some(Element::Separator)
+                    }
+                } else {
+                    None
+                }
+            },
+            IterAsCat::One(e, done) => {
+                if !*done {
+                    *done = true;
+                    Some(Element::Element(e))
+                } else {
+                    None
+                }
+            }
+            IterAsCat::Nil => None,
+        }
+    }
 }
 
 impl Value<ParsedValue, ParsedText, ParsedTaggedTuple, ParsedDictionary, ParsedList, ParsedCatenation> for ParsedValue {
@@ -210,7 +253,7 @@ impl Value<ParsedValue, ParsedText, ParsedTaggedTuple, ParsedDictionary, ParsedL
 
 enum AsTupleIter<'a> {
     Value(bool, &'a ParsedValue),
-    Tuple(Iter<'a, ParsedTupleElement>),
+    Tuple(Iter<'a, ParsedValue>),
 }
 
 impl<'a> AsTupleIter<'a> {
@@ -237,7 +280,7 @@ impl<'a> Iterator for AsTupleIter<'a> {
             AsTupleIter::Tuple(iter) => {
                 if let Some(t) = iter.next() {
                     match t {
-                        ParsedTupleElement::Positional(e) => {
+                        e => {
                             Some(e)
                         }
                     }
@@ -279,7 +322,7 @@ pub struct ParsedTag {
 #[derive(Clone)]
 pub struct ParsedTaggedTuple {
     pub tag: Option<ParsedTag>,
-    pub elements: Vec<ParsedTupleElement>,
+    pub elements: Vec<ParsedValue>,
 }
 
 impl TaggedTuple<ParsedValue, ParsedText, ParsedTaggedTuple, ParsedDictionary, ParsedList, ParsedCatenation> for ParsedTaggedTuple {
@@ -353,7 +396,7 @@ impl TaggedTuple<ParsedValue, ParsedText, ParsedTaggedTuple, ParsedDictionary, P
     fn get(&self, index: usize) -> Option<&ParsedValue> {
         if let Some(e) = self.elements.get(index) {
             match e {
-                ParsedTupleElement::Positional(v) => Some(v),
+                v => Some(v),
             }
         } else {
             None
@@ -363,7 +406,7 @@ impl TaggedTuple<ParsedValue, ParsedText, ParsedTaggedTuple, ParsedDictionary, P
     fn get_mut(&mut self, index: usize) -> Option<&mut ParsedValue> {
         if let Some(e) = self.elements.get_mut(index) {
             match e {
-                ParsedTupleElement::Positional(v) => Some(v),
+                v => Some(v),
             }
         } else {
             None
@@ -417,12 +460,7 @@ impl<'a> Iterator for AttributeIterator<'a> {
     }
 }
 
-#[derive(Clone)]
-pub enum ParsedTupleElement {
-    Positional(ParsedValue),
-}
-
-pub struct TupleIterator<'a>(Iter<'a, ParsedTupleElement>);
+pub struct TupleIterator<'a>(Iter<'a, ParsedValue>);
 
 impl<'a> Iterator for TupleIterator<'a> {
     type Item = &'a ParsedValue;
@@ -430,7 +468,7 @@ impl<'a> Iterator for TupleIterator<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(e) = self.0.next() {
             match e {
-                ParsedTupleElement::Positional(v) => Some(v),
+                v => Some(v),
             }
         } else {
             None
@@ -438,7 +476,7 @@ impl<'a> Iterator for TupleIterator<'a> {
     }
 }
 
-pub struct TupleIteratorMut<'a>(IterMut<'a, ParsedTupleElement>);
+pub struct TupleIteratorMut<'a>(IterMut<'a, ParsedValue>);
 
 impl<'a> Iterator for TupleIteratorMut<'a> {
     type Item = &'a mut ParsedValue;
@@ -446,7 +484,7 @@ impl<'a> Iterator for TupleIteratorMut<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(e) = self.0.next() {
             match e {
-                ParsedTupleElement::Positional(v) => Some(v),
+                v => Some(v),
             }
         } else {
             None
@@ -608,36 +646,5 @@ impl Catenation<ParsedValue, ParsedText, ParsedTaggedTuple, ParsedDictionary, Pa
 
     fn iter_mut(&mut self) -> Self::ElementIteratorMut<'_> {
         self.components.iter_mut()
-    }
-}
-
-pub struct ElementIterator<'b> {
-    components: &'b [(ParsedValue, bool)],
-    whitespace: &'b [bool],
-    index: usize,
-    after_component: bool,
-}
-
-impl<'b> Iterator for ElementIterator<'b> {
-    type Item = Element<&'b ParsedValue>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index != self.components.len() - 1 {
-            if self.after_component {
-                let whitespace = self.whitespace[self.index];
-                self.index += 1;
-                if whitespace {
-                    self.after_component = false;
-                    return Some(Element::Separator);
-                };
-            };
-        } else {
-            if self.after_component {
-                return None;
-            };
-        };
-        self.after_component = true;
-        let element = &self.components[self.index];
-        Some(Element::Element(&element.0, element.1))
     }
 }

@@ -1,7 +1,7 @@
 [package]
 name = "khi"
 description = "Khi parser & library"
-version = "0.20.0"
+version = "0.20.1"
 authors = ["Torm"]
 edition = "2021"
 rust-version = "1.65"
@@ -29,6 +29,8 @@ html = ["parse"]
 #serde = []
 # Encoding and decoding Khi data structures
 #enc = []
+# Operator preprocessing according to operator convention.
+op = ["parse"]
 
 [[bin]]
 name = "khi-html-cmd"

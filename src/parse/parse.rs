@@ -123,7 +123,7 @@ pub mod parser {
     use std::vec;
     use crate::{Dictionary, Element, TextType, Value};
     use crate::parse::parse::grouper::{Grouped, ScopeType, StringType};
-    use crate::parse::pdm::{ParsedAttribute, ParsedDictionary, ParsedList, ParsedTaggedTuple, ParsedText, ParsedValue, Position, ParsedTupleElement, ParsedTag, ParsedCatenation};
+    use crate::parse::pdm::{ParsedAttribute, ParsedDictionary, ParsedList, ParsedTaggedTuple, ParsedText, ParsedValue, Position, ParsedTag, ParsedCatenation};
 
     pub struct Parser<'a> {
         stream: Iter<'a, Grouped>,
@@ -262,7 +262,7 @@ pub mod parser {
                     if !matches!(self.t0, Grouped::Bar(..)) || !matches!(self.t1, Grouped::String(..) | Grouped::CurlyBracket(..) | Grouped::SquareBracket(..) | Grouped::AngleBracket(..) | Grouped::Tilde(..)) {
                         return Ok((element, false));
                     }
-                    elements.push(ParsedTupleElement::Positional(element));
+                    elements.push(element);
                     self.shift();
                 },
                 Grouped::Bar(..) => {
@@ -271,7 +271,7 @@ pub mod parser {
                 _ => return ParseError::token_expectation_error(&[Rule::Catenation, Rule::Tuple, Rule::TaggedValue], self.t0, Rule::Value, self.t0.at()),
             }
             loop {
-                let element = ParsedTupleElement::Positional(self.parse_catenation()?);
+                let element = self.parse_catenation()?;
                 elements.push(element);
                 if !matches!(self.t0, Grouped::Bar(..)) || !matches!(self.t1, Grouped::String(..) | Grouped::CurlyBracket(..) | Grouped::SquareBracket(..) | Grouped::AngleBracket(..) | Grouped::Tilde(..)) {
                     break;
@@ -368,7 +368,7 @@ pub mod parser {
             let (value, is_tuple) = self.parse_value()?;
             let to = self.at();
             let tuple = if !is_tuple { // Wrap in tuple if not tuple phrase.
-                ParsedTaggedTuple { tag: None, elements: vec![ParsedTupleElement::Positional(value)] }
+                ParsedTaggedTuple { tag: None, elements: vec![value] }
             } else {
                 match value {
                     ParsedValue::TaggedTuple(t, _, _) => {
@@ -870,7 +870,7 @@ pub mod parser {
         ///                  | <list-bracket>
         ///                  | <confined-tuple>
         /// ```
-        fn parse_confined_values(&mut self) -> Result<Vec<ParsedTupleElement>, ParseError> {
+        fn parse_confined_values(&mut self) -> Result<Vec<ParsedValue>, ParseError> {
             let mut arguments = vec![];
             if !matches!(self.t0, Grouped::Colon(..)) {
                 return ParseError::token_expectation_error(&[Rule::Colon], self.t0, Rule::Arguments, self.t0.at());
@@ -906,25 +906,25 @@ pub mod parser {
                             };
                             if let Some(arg2) = arg2 {
                                 let to = self.at();
-                                arguments.push(ParsedTupleElement::Positional(ParsedValue::Catenation(ParsedCatenation { components: vec![Element::Element(text, true), Element::Element(arg2, false)] }, *from, to)));
+                                arguments.push(ParsedValue::Catenation(ParsedCatenation { components: vec![Element::Element(text), Element::Element(arg2)] }, *from, to));
                             } else {
-                                arguments.push(ParsedTupleElement::Positional(text));
+                                arguments.push(text);
                             }
                         } else {
-                            arguments.push(ParsedTupleElement::Positional(text));
+                            arguments.push(text);
                         }
                     }
                     Grouped::CurlyBracket(..) => {
                         let value = self.parse_curly_bracket()?;
-                        arguments.push(ParsedTupleElement::Positional(value));
+                        arguments.push(value);
                     }
                     Grouped::SquareBracket(..) => {
                         let list = self.parse_list_bracket()?;
-                        arguments.push(ParsedTupleElement::Positional(list));
+                        arguments.push(list);
                     }
                     Grouped::AngleBracket(..) => {
                         let argument = self.parse_confined_tuple()?;
-                        arguments.push(ParsedTupleElement::Positional(argument));
+                        arguments.push(argument);
                         //break;
                     }
                     _ => return ParseError::token_expectation_error(&[Rule::String, Rule::BracketedValue, Rule::BracketedDictionary, Rule::BracketedList, Rule::TaggedArguments], self.t0, Rule::Argument, self.t0.at()),
@@ -1056,7 +1056,6 @@ pub mod parser {
         fn parse_catenation(&mut self) -> Result<ParsedValue, ParseError> {
             let mut terms: Vec<ParsedValue> = vec![];
             let mut whitespace = vec![];
-            let mut bracketed = vec![];
             let from = self.at();
             let mut space_before = false;
             if !matches!(self.t0, Grouped::String(..) | Grouped::CurlyBracket(..) | Grouped::SquareBracket(..) | Grouped::AngleBracket(..) | Grouped::Tilde(..)) {
@@ -1069,9 +1068,8 @@ pub mod parser {
                     space_before = self.whitespace_before;
                     match self.t0 {
                         Grouped::String(f, fg, h, hj, typ) => {
-                            let bracket = *hj != StringType::Word;
                             let text = self.parse_text()?;
-                            push_term(&mut terms, &mut bracketed, &mut whitespace, text, space_before, bracket);
+                            push_term(&mut terms, &mut whitespace, text, space_before);
                         }
                         Grouped::CurlyBracket(..) => {
                             let mut value = self.parse_curly_bracket()?;
@@ -1081,24 +1079,23 @@ pub mod parser {
                                     text.text_type = TextType::Bracket;
                                 }
                             }
-                            push_term(&mut terms, &mut bracketed, &mut whitespace, value, space_before, true);
+                            push_term(&mut terms, &mut whitespace, value, space_before);
                         }
                         Grouped::SquareBracket(..) => {
                             let value = self.parse_list_bracket()?;
-                            push_term(&mut terms, &mut bracketed, &mut whitespace, value, space_before, true);
+                            push_term(&mut terms, &mut whitespace, value, space_before);
                         },
                         Grouped::AngleBracket(..) => {
                             let value = self.parse_confined_tuple()?;
-                            push_term(&mut terms, &mut bracketed, &mut whitespace, value, space_before, true);
+                            push_term(&mut terms, &mut whitespace, value, space_before);
                         },
                         _ => break,
                     }
                 }
             }
             let to = self.at();
-            return Ok(ParsedValue::from_terms(from, to, terms, whitespace, bracketed));
-            fn push_term(terms: &mut Vec<ParsedValue>, bracketed: &mut Vec<bool>, whitespace: &mut Vec<bool>, component: ParsedValue, ws_before: bool, bracket: bool) {
-                bracketed.push(bracket);
+            return Ok(ParsedValue::from_terms(from, to, terms, whitespace));
+            fn push_term(terms: &mut Vec<ParsedValue>, whitespace: &mut Vec<bool>, component: ParsedValue, ws_before: bool) {
                 if terms.len() != 0 {
                     if ws_before {
                         whitespace.push(true);
@@ -1302,8 +1299,11 @@ pub mod parser {
         }
 
         fn require_end(&mut self) {
-            if self.t0.has_whitespace_after() {
-                self.errors.push(ParseError::UnexpectedWhitespace(self.at()))//TODO at
+            //if self.t0.has_whitespace_after() { TODO What is this?
+            //    self.errors.push(ParseError::UnexpectedWhitespace(self.at()))//TODO at
+            //}
+            if !matches!(self.t0, Grouped::End(..)) {
+                self.errors.push(ParseError::ExpectedEnd(self.t0.to_type(), self.at())) // TODO ExpectedBracketEnd
             }
         }
 
@@ -1795,7 +1795,7 @@ pub mod grouper {
                         tokens.push(word);
                         self.shift();
                     }
-                    Token::Tilde(at) => {
+                    Token::Tilde(at) => { // TODO Remove
                         let following = self.t[1];
                         if matches!(tokens.last(), Some(Grouped::Tilde(..))) { // Remove repeated tildes.
                             tokens.pop();

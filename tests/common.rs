@@ -38,7 +38,7 @@ pub fn join_strings_in_value(value: &ParsedValue) -> String {
             let mut string = String::new();
             for e in c.iter() {
                 match e {
-                    Element::Element(e, d) => {
+                    Element::Element(e) => {
                         match e {
                             ParsedValue::Text(t, _, _) => {
                                 string.push_str(t.as_str())
@@ -108,7 +108,7 @@ pub fn summarize_terms(value: &ParsedValue) -> String {
         ParsedValue::Catenation(compound, ..) => {
             for element in compound.iter() {
                 match element {
-                    Element::Element(c, b) => {
+                    Element::Element(c) => {
                         match c {
                             ParsedValue::Nil(..) => summary = format!("{}Nl", summary),
                             ParsedValue::Text(..) => summary = format!("{}Tx", summary),

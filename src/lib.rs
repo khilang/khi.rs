@@ -8,7 +8,8 @@ pub mod parse;
 
 #[cfg(feature = "html")]
 pub mod html;
-
+#[cfg(feature = "op")]
+pub mod op;
 //#[cfg(feature = "serde")]
 //pub mod ser;
 
@@ -221,8 +222,7 @@ pub trait Catenation<
 /// An element in a catenation.
 #[derive(Clone)]
 pub enum Element<T> {
-    /// (element, bracketed)
-    Element(T, bool),
+    Element(T),
     Separator,
 }
 
