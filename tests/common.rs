@@ -46,9 +46,6 @@ pub fn join_strings_in_value(value: &ParsedValue) -> String {
                             _ => unimplemented!(),
                         }
                     }
-                    Element::Separator => {
-                        string.push(' ');
-                    }
                 }
             }
             return string;
@@ -118,7 +115,6 @@ pub fn summarize_terms(value: &ParsedValue) -> String {
                             ParsedValue::TaggedTuple(..) => summary = format!("{}Tp", summary),
                         }
                     }
-                    Element::Separator => summary = format!("{} ", summary),
                 }
             }
         }

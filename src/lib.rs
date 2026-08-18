@@ -223,7 +223,6 @@ pub trait Catenation<
 #[derive(Clone)]
 pub enum Element<T> {
     Element(T),
-    Separator,
 }
 
 /// Get the character corresponding to an escaped character sequence.

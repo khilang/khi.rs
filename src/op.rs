@@ -1,7 +1,7 @@
 //! Implements preprocessing according to the operator convention.
 
 use std::rc::Rc;
-use crate::{Element, Text, TextType};
+use crate::{Element, Text, TextType, Value};
 use crate::parse::pdm::{ParsedCatenation, ParsedTag, ParsedTaggedTuple, ParsedText, ParsedValue, Position};
 
 pub enum TakeBefore {
@@ -75,7 +75,7 @@ pub fn preprocess_operators(value: &ParsedValue, operators: &[Operator]) -> Resu
                                         } else {
                                             match result.pop() {
                                                 Some(Element::Element(element)) => Some(element),
-                                                Some(Element::Separator) | None => return Err(format!("Operator {} at {}:{} is missing a character argument after.", operator.symbol, element.from().line, element.from().column)),// Todo position
+                                                _ => return Err(format!("Operator {} at {}:{} is missing a character argument after.", operator.symbol, element.from().line, element.from().column)),// Todo position
                                             }
                                         }
                                     }
@@ -104,7 +104,7 @@ pub fn preprocess_operators(value: &ParsedValue, operators: &[Operator]) -> Resu
                                         } else {
                                             match result.pop() {
                                                 Some(Element::Element(element)) => Some(element),
-                                                Some(Element::Separator) | None => return Err(format!("Operator {} at {}:{} is missing a word argument before.", operator.symbol, element.from().line, element.from().column)),// Todo position
+                                                _ => return Err(format!("Operator {} at {}:{} is missing a word argument before.", operator.symbol, element.from().line, element.from().column)),// Todo position
                                             }
                                         }
                                     }
@@ -152,17 +152,13 @@ pub fn preprocess_operators(value: &ParsedValue, operators: &[Operator]) -> Resu
                                             let e1 = ParsedValue::Text(ParsedText { text_type: TextType::Plain, str: Rc::from(w.as_str()) }, element.from(), element.to());
                                             if t.is_empty() { // Might have bracket.
                                                 match iter.next() {
-                                                    Some(Element::Element(next)) => {
+                                                    Some(Element::Element(next)) if !next.is_nil() => {
                                                         let e2 = next.clone();
                                                         let from = e1.from(); let to = e2.to();
                                                         let cat = ParsedValue::Catenation(ParsedCatenation { components: vec![Element::Element(e1), Element::Element(e2)] }, from, to);
                                                         Some(cat)
                                                     }
-                                                    Some(Element::Separator) => {
-                                                        Some(e1)
-                                                        //result.push(Element::Separator); ///////////////////// TODO
-                                                    }
-                                                    None => {
+                                                    _ => {
                                                         Some(e1)
                                                     }
                                                 }
@@ -214,7 +210,7 @@ pub fn preprocess_operators(value: &ParsedValue, operators: &[Operator]) -> Resu
                 }
             }
         } else {
-            result.push(Element::Separator);
+            unreachable!() // TODO Remove
         }
     }
     if result.len() == 0 {

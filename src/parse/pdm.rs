@@ -45,7 +45,7 @@ impl ParsedValue {
             while i < terms.len() - 1 {
                 components.push(Element::Element(terms[i].clone()));
                 if whitespace[i] {
-                    components.push(Element::Separator);
+                    components.push(Element::Element(ParsedValue::Text(ParsedText { str: Rc::from(" "), text_type: TextType::Plain }, from, to))); // TODO: Remove whitespace variable, just parse as Text; Fix position
                 }
                 i += 1;
             }
@@ -110,7 +110,7 @@ impl<'b> Iterator for IterAsCat<'b> {
                     if let Element::Element(v) = e {
                         Some(Element::Element(v))
                     } else {
-                        Some(Element::Separator)
+                        unreachable!() // TODO Remove if
                     }
                 } else {
                     None

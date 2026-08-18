@@ -772,7 +772,7 @@ pub mod parser {
         ///
         /// ```text
         /// <tagged-list> → <tagged-tuple>
-        ///               | <tagged-tuple>_<bulleted-list>
+        ///               | <tagged-tuple>_<tagged-list>
         /// ```
         fn parse_tagged_list(&mut self, elements: Vec<ParsedValue>) -> Result<ParsedList, ParseError> {
             let mut elements = elements;
@@ -1042,6 +1042,7 @@ pub mod parser {
         /// <catenation> → <term>
         ///              | <term> <catenation>
         ///              | "~"
+        ///              | "~" <catenation>
         /// ```
         /// `<term>` takes precedence over `<catenation>` on ambiguity, which can occur
         /// with `~` when `<term>` matches `<text>`.
@@ -1061,36 +1062,38 @@ pub mod parser {
             if !matches!(self.t0, Grouped::String(..) | Grouped::CurlyBracket(..) | Grouped::SquareBracket(..) | Grouped::AngleBracket(..) | Grouped::Tilde(..)) {
                 return ParseError::token_expectation_error(&[Rule::String, Rule::BracketedDictionary, Rule::BracketedValue, Rule::BracketedList, Rule::TaggedArguments, Rule::Tilde], self.t0, Rule::Catenation, self.t0.at());
             }
-            if matches!(self.t0, Grouped::Tilde(..)) {
-                self.shift();
-            } else {
-                loop {
-                    space_before = self.whitespace_before;
-                    match self.t0 {
-                        Grouped::String(f, fg, h, hj, typ) => {
-                            let text = self.parse_text()?;
-                            push_term(&mut terms, &mut whitespace, text, space_before);
-                        }
-                        Grouped::CurlyBracket(..) => {
-                            let mut value = self.parse_curly_bracket()?;
-                            if value.is_text() { // Track if open text has brackets around it.
-                                let text = value.as_mut_text().unwrap();
-                                if text.text_type == TextType::Plain {
-                                    text.text_type = TextType::Bracket;
-                                }
-                            }
-                            push_term(&mut terms, &mut whitespace, value, space_before);
-                        }
-                        Grouped::SquareBracket(..) => {
-                            let value = self.parse_list_bracket()?;
-                            push_term(&mut terms, &mut whitespace, value, space_before);
-                        },
-                        Grouped::AngleBracket(..) => {
-                            let value = self.parse_confined_tuple()?;
-                            push_term(&mut terms, &mut whitespace, value, space_before);
-                        },
-                        _ => break,
+            loop {
+                space_before = self.whitespace_before;
+                match self.t0 {
+                    Grouped::String(f, fg, h, hj, typ) => {
+                        let text = self.parse_text()?;
+                        push_term(&mut terms, &mut whitespace, text, space_before);
                     }
+                    Grouped::CurlyBracket(..) => {
+                        let mut value = self.parse_curly_bracket()?;
+                        if value.is_text() { // Track if open text has brackets around it.
+                            let text = value.as_mut_text().unwrap();
+                            if text.text_type == TextType::Plain {
+                                text.text_type = TextType::Bracket;
+                            }
+                        }
+                        push_term(&mut terms, &mut whitespace, value, space_before);
+                    }
+                    Grouped::SquareBracket(..) => {
+                        let value = self.parse_list_bracket()?;
+                        push_term(&mut terms, &mut whitespace, value, space_before);
+                    },
+                    Grouped::AngleBracket(..) => {
+                        let value = self.parse_confined_tuple()?;
+                        push_term(&mut terms, &mut whitespace, value, space_before);
+                    },
+                    Grouped::Tilde(..) => {
+                        let from = self.at();
+                        self.shift();
+                        let to = self.at();
+                        push_term(&mut terms, &mut whitespace, ParsedValue::Nil(from, to), space_before);
+                    }
+                    _ => break,
                 }
             }
             let to = self.at();
